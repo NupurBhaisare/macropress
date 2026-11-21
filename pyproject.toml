@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "macropress"
+dynamic = ["version"]
+description = "Press the buttons of an Excel workbook without Excel: its VBA macros are converted to Python and run on a copy of the .xlsm"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "The MacroPress authors" }]
+# 3.11 only: vb2py's parser, SimpleParse 2.2.4, is a C extension built on APIs Python 3.12 removed.
+requires-python = ">=3.11,<3.12"
+keywords = ["excel", "vba", "xlsm", "macros", "spreadsheet", "automation", "converter", "ai-agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+    "Topic :: Software Development :: Interpreters",
+]
+dependencies = [
+    "lxml>=5",
+    # 0.60.x reads a workbook's OLE parts (its VBA project) whole, which the size limits in xlsx.py rely on.
+    "oletools>=0.60.2,<0.61",
+    "SimpleParse==2.2.4",
+    "vb2Py==0.4.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/NupurBhaisare/macropress"
+Documentation = "https://github.com/NupurBhaisare/macropress#readme"
+Issues = "https://github.com/NupurBhaisare/macropress/issues"
+Changelog = "https://github.com/NupurBhaisare/macropress/blob/main/CHANGELOG.md"
+
+[project.scripts]
+macropress = "macropress.__main__:main"
+
+[dependency-groups]
+dev = ["pytest==8.3.4", "ruff==0.16.5"]
+
+[tool.hatch.version]
+path = "macropress/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["macropress"]
+
+[tool.hatch.build.targets.sdist]
+include = ["macropress", "tests", "examples", "docs", "README.md", "LICENSE", "CHANGELOG.md"]
+exclude = ["docs/assets"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# pyflakes (F), a safe pycodestyle subset (E4/E7/E9), isort (I), bugbear (B), pyupgrade (UP).
+select = ["F", "E4", "E7", "E9", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+    # vb2py, the VBA parser, imports the deprecated imp module and has invalid escapes in its strings.
+    "ignore::DeprecationWarning:vb2py.*",
+    "ignore::SyntaxWarning:vb2py.*",
+    # oletools uses pyparsing names that pyparsing 3.3 deprecates.
+    "ignore::DeprecationWarning:oletools.*",
+]

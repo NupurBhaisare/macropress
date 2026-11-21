@@ -1,0 +1,24 @@
+name: Something isn't modelled
+description: A macro stopped with "not modelled", and you'd like MacroPress to cover it.
+labels: [not modelled]
+body:
+  - type: input
+    id: message
+    attributes:
+      label: The message
+      description: The step's message from the report, for example "Range.Delete (shifting cells and every reference to them)".
+    validations:
+      required: true
+  - type: textarea
+    id: vba
+    attributes:
+      label: The VBA
+      description: The lines that use it. Made-up names and data, please.
+      render: vb
+    validations:
+      required: true
+  - type: textarea
+    id: excel
+    attributes:
+      label: What Excel does
+      description: What those lines do in Excel, especially in the cases that are easy to get wrong.

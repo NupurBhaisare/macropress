@@ -1,0 +1,38 @@
+name: A workbook doesn't work
+description: MacroPress gives a different result from Excel, or fails on a workbook.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. **This repository is public: please don't attach workbooks with real or
+        confidential data.** The most useful report has the smallest workbook that shows the problem, with made-up
+        data.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command you ran, and the JSON report it printed (or the part of it that matters).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What Excel does
+      description: What you expected instead, ideally what Excel does when you press the same buttons.
+    validations:
+      required: true
+  - type: textarea
+    id: vba
+    attributes:
+      label: The VBA
+      description: The macro, or the lines around where it goes wrong. You can attach a minimal workbook too.
+      render: vb
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: The output of `macropress --version`, your operating system, and your Excel version if you compared.
+    validations:
+      required: true

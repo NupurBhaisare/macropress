@@ -1,0 +1,2 @@
+# The example workbooks are binary: never change their line endings.
+*.xlsm binary

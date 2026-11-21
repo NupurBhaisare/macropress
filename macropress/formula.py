@@ -14,7 +14,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from . import entry
 from .errors import VBANotImplemented
-from .values import XLError, date_to_serial, format_double, typed_number
+from .values import XLError, date_to_serial, fifteen, format_double, typed_number
 
 MAX_ROW, MAX_COL = 1048576, 16384
 
@@ -278,11 +278,6 @@ def num(v):
         if number is not None:
             return number
     raise _Err(XLError("#VALUE!"))
-
-
-def fifteen(x):
-    """A number as Excel compares and rounds it: to 15 significant digits."""
-    return float(f"{x:.14e}")
 
 
 def finite(x):

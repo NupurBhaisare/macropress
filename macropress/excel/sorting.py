@@ -109,8 +109,9 @@ class SortObject(VBAObject):
 
 
 def _sort_key(v, descending, match_case):
-    """Excel's ascending order: numbers, text, logical, errors; blanks are always last, whichever the order."""
-    if v is None or (isinstance(v, str) and v == ""):
+    """Excel's ascending order: numbers, text (the empty text first), FALSE, TRUE, errors; blank cells are always
+    last, whichever the order. Errors are all one to a sort: they stay in the order they were in."""
+    if v is None:
         return (1, 0)
     rank = fx.type_rank(v)
     if rank == 0:
@@ -120,7 +121,7 @@ def _sort_key(v, descending, match_case):
     elif rank == 2:
         k = (rank, bool(v))
     else:
-        k = (rank, str(v))
+        k = (rank,)
     return (0, _Desc(k) if descending else k)
 
 

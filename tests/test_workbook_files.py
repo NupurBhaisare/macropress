@@ -205,6 +205,85 @@ def test_calculation_follows_what_the_workbook_file_says(tmp_path):
     assert _run(runtime.Context(str(path)), 'Debug.Print Range("B2").Value') == ["2"]
     with pytest.raises(VBANotImplemented, match="could not be calculated"):
         _run(runtime.Context(str(path)), 'Range("A2").Value = 5\nx = Range("B2").Value')
+    # one entered in a single cell is calculated, and saved as the array formula it was
+    cells = '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f t="array" ref="B1">SUM(A1:A2)</f><v>1</v></c></row>'
+    path = _workbook(tmp_path / "in4.xlsx", {**PARTS, "xl/worksheets/sheet1.xml": _sheet(cells)})
+    assert _value(_press(path, tmp_path / "out4.xlsx", 'Range("A2").Value = 5'), 1, 2) == 6.0
+    with zipfile.ZipFile(tmp_path / "out4.xlsx") as z:
+        assert '<f t="array" ref="B1">SUM(A1:A2)</f><v>6</v>' in z.read("xl/worksheets/sheet1.xml").decode()
+
+
+FORMATS = (  # cell styles 1 to 8: 0%, a date, 0.00, Text, currency, a date format made by hand, h:mm, #,##0.00
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    '<numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/>'
+    '<numFmt numFmtId="165" formatCode="#,##0.00"/></numFmts>'
+    '<fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders>'
+    '<cellXfs count="9"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+    + "".join(
+        f'<xf numFmtId="{i}" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/>'
+        for i in (9, 14, 2, 49, 8, 164, 20, 165)
+    )
+    + "</cellXfs></styleSheet>"
+)
+
+
+def test_number_formats_decide_what_vba_reads_and_what_a_write_leaves(tmp_path):
+    sheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<cols><col min="10" max="10" width="12" style="4"/></cols><sheetData>'
+        '<row r="1">' + "".join(f'<c r="{c}1" s="{i}"/>' for i, c in enumerate("ABCDEFG", 1)) + "</row>"
+        '<row r="2"><c r="A2" s="7"><v>0.5</v></c><c r="B2" s="2"><v>45296</v></c><c r="C2" s="5"><v>1.23456</v></c>'
+        '<c r="D2" s="8"><v>1250</v></c><c r="E2"><v>1250</v></c><c r="F2" t="inlineStr"><is><t>n</t></is></c></row>'
+        "</sheetData></worksheet>"
+    )
+    parts = {**PARTS, "xl/styles.xml": FORMATS, "xl/worksheets/sheet1.xml": sheet}
+    path = _workbook(tmp_path / "in.xlsx", parts)
+    ctx = runtime.Context(str(path))
+    vba = (
+        'Debug.Print TypeName(Range("A2").Value), TypeName(Range("B2").Value), TypeName(Range("C2").Value), '
+        'Range("C2").Value, Range("C2").Value2, Range("D2").Text\n'
+        'Range("A1").Value = "$5"\nRange("B1").Value = "5%"\nRange("C1").Value = "5%"\nRange("D1").Value = "007"\n'
+        'Range("E1").Value = DateSerial(2024, 1, 5)\nRange("F1").Value = "$5"\nRange("G1").Value = TimeSerial(13, 5, 0)\n'
+        'For i = 1 To 7\ns = s & Cells(1, i).NumberFormat & " | "\nNext\nDebug.Print s\n'
+        'Debug.Print Range("C1").Value2, TypeName(Range("D1").Value), Range("D1").Value, TypeName(Range("F1").Value)\n'
+        'Range("G1").Value = DateSerial(2024, 1, 5)\nRange("J5").Value = "00123"\nRange("K1").Value = CCur(1.239)\n'
+        'Range("K2").Value2 = CCur(1.239)\nRange("K3").Value2 = DateSerial(2024, 1, 5)\n'
+        'Debug.Print Range("G1").NumberFormat, Range("J5").Value, Range("J9").NumberFormat, Range("K1").Value2, '
+        'Range("K1").NumberFormat, Range("K2").Value2, Range("K2").NumberFormat, TypeName(Range("K3").Value)\n'
+        'Range("B2").Copy Range("M1")\nRange("L9").Copy Range("B2")\nRange("C2").Clear\nRange("A2").ClearContents\n'
+        'Debug.Print TypeName(Range("M1").Value), Range("B2").NumberFormat, Range("C2").NumberFormat, '
+        'Range("A2").NumberFormat\n'
+        'Range("D1:F2").AutoFilter Field:=1, Criteria1:="1250"\nDebug.Print Rows(2).Hidden\n'
+        'Range("D1:F2").AutoFilter Field:=1, Criteria1:="1,250.00"\nDebug.Print Rows(2).Hidden\n'
+        'Range("D1:F2").AutoFilter Field:=1, Criteria1:="<>1250"\nDebug.Print Rows(2).Hidden\n'
+        'Range("D1:F2").AutoFilter Field:=1\nRange("D1:F2").AutoFilter Field:=2, Criteria1:="1250"\n'
+        "Debug.Print Rows(2).Hidden"
+    )
+    assert _run(ctx, vba) == [
+        # a time reads as a Double, a date as a Date, a currency as a Currency of four decimals; Text is what shows
+        "Double Date Currency 1.2346 1.23456 1,250.00",
+        # "$5" replaces a percent format, "5%" a date; 0.00, Text and a format made by hand stay; a date replaces a
+        # currency format; a time keeps h:mm
+        "$#,##0_);[Red]($#,##0) | 0% | 0.00 | @ | m/d/yyyy | yyyy-mm-dd | h:mm | ",
+        "0.05 String 007 Date",
+        # a date replaces a time format; column J is Text; a Currency reaches a cell rounded to cents and formatted,
+        # by Value2 as the bare number, like a Date
+        "m/d/yyyy 00123 @ 1.24 $#,##0.00_);($#,##0.00) 1.239 General Double",
+        # a copy brings its number format, an empty General cell's too; Clear resets it, ClearContents does not
+        "Date General General h:mm",
+        # "is" goes by what the cell shows (1,250.00 is not 1250), "is not" by its value
+        "True",
+        "False",
+        "True",
+        "False",
+    ]
+    ctx.save(str(tmp_path / "out.xlsx"))
+    saved = read_workbook(str(tmp_path / "out.xlsx")).find_sheet("Data")
+    formats = {ref: saved.format_at(r, c) for ref, r, c in (("A1", 1, 1), ("B1", 1, 2), ("C1", 1, 3), ("K1", 1, 11))}
+    assert formats == {"A1": "$#,##0_);[Red]($#,##0)", "B1": "0%", "C1": "0.00", "K1": "$#,##0.00_);($#,##0.00)"}
+    assert (_value(saved, 5, 10), saved.format_at(5, 10), saved.format_at(2, 3)) == ("00123", "@", None)
 
 
 STYLES = (
@@ -223,7 +302,7 @@ def test_saving_formats_written_dates_and_refuses_a_rename_a_chart_would_miss(tm
     parts = {**PARTS, "xl/styles.xml": STYLES, "xl/worksheets/sheet1.xml": sheet, "xl/charts/chart1.xml": chart}
     path = _workbook(tmp_path / "in.xlsx", parts)
     saved = _press(path, tmp_path / "out.xlsx", 'Range("A1").Value = DateSerial(2024, 1, 6)\nRange("E1").Value = Now')
-    assert (saved.rows[1][1].numfmt, saved.rows[1][5].numfmt) == ("yyyy-mm-dd", "m/d/yy h:mm")
+    assert (saved.rows[1][1].numfmt, saved.rows[1][5].numfmt) == ("yyyy-mm-dd", "m/d/yyyy h:mm")
     with pytest.raises(VBANotImplemented, match="xl/charts/chart1.xml still refers to"):
         _press(path, tmp_path / "out2.xlsx", 'Sheets("Data").Name = "Renamed"')
 

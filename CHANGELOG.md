@@ -50,4 +50,22 @@ Found by running some 990 small macros in both Excel and MacroPress and comparin
   formula entered with Ctrl+Shift+Enter is no longer read with a value its formula has outgrown.
 - **Speed**: a write no longer looks at every formula in the workbook to find the ones that read the cell, so a macro
   that writes many cells of a workbook with many formulas takes time in proportion to what it changes.
+- **Cells**: text written to a cell is read as Excel reads typed text: `"$5"`, `"5%"`, `"1,234"`, `"(5)"`, `"1e3"`,
+  `"1 1/2"` and `"#N/A"` become values with the number format Excel gives them, `"1,23"` and `"5-"` stay text, and
+  a date or a time is refused (Excel reads those by regional settings). A cell formatted as Text keeps what is
+  written to it. The number formats of empty cells, rows and columns are read, and decide what a write leaves and
+  what VBA reads: a `Date` for a format that shows a day, a month or a year, a `Double` for a time alone, a `Currency`
+  for Excel's own currency formats. A write replaces one of Excel's own formats of another kind (a date written to a
+  cell of percentages) and leaves a plain number format or one made by hand in place. `Value2` reads and writes the
+  bare number; a `Currency` written through `Value` arrives rounded to cents. `Clear` resets the number format, and a
+  copy brings it, from an empty cell too. `Text` gives what the cell shows for General and plain number formats, and
+  is refused where the column's width would decide it.
+- **Filters and sorting**: a criterion is matched against what each cell shows, without regard to case or to the
+  spaces around it; `<>` a number goes by value. A value, an array or a clear on a filtered range reaches only the
+  rows the filter shows. `ShowAllData` with nothing filtered is error 1004, and an `AutoFilter` with a field the range
+  does not have leaves no filter behind. `Range.End` passes over hidden rows and columns. A sort puts errors after
+  logical values and the empty text first among text.
+- **The saved copy**: a changed cell is saved with the number format the model has for it, a new cell takes its
+  column's style, an array formula entered with Ctrl+Shift+Enter is saved as one when its value changes, and a number
+  too large for Excel is refused rather than written.
 

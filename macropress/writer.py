@@ -4,11 +4,13 @@ Every part of the original file is copied unchanged (VBA project, buttons, style
 except the parts that changed:
   - each changed sheet: cell values and formulas, hidden rows, AutoFilter, selection, grouping
   - workbook.xml: active sheet, sheet names, filter ranges, recalculation flag
+  - styles.xml, when a written cell's number format changed (a Date written to a General cell)
   - calcChain.xml is dropped when formulas changed (Excel rebuilds it)
-Cell formatting is kept: a cleared cell keeps its style, as with ClearContents.
+A cell's font, fill and borders are kept, whatever the macro did: a cleared cell keeps its look.
 """
 
 import copy
+import math
 import os
 import re
 import zipfile
@@ -18,8 +20,9 @@ from lxml import etree
 from .errors import VBANotImplemented
 from .excel import PENDING, area_text, col_letters, parse_area
 from .formula import file_syntax, rename_sheets
+from .numfmt import BUILTIN_FORMATS, builtin_code
 from .values import XLError
-from .xlsx import BUILTIN_FORMATS, NS, REL_NS, Package, read_workbook
+from .xlsx import NS, REL_NS, Package, custom_formats, read_workbook
 
 M = NS[1:-1]
 R = REL_NS[1:-1]
@@ -100,6 +103,8 @@ def _cell_key(cell):
 
 
 def _number_text(x):
+    if not math.isfinite(x):
+        raise VBANotImplemented(f"saving {x!r} in a cell: a number too large for Excel")
     return str(int(x)) if float(x).is_integer() and abs(x) < 1e15 else repr(float(x))
 
 
@@ -174,31 +179,24 @@ def save_workbook(book, original_path, out_path):
 
 
 class _Styles:
-    """The workbook's cell styles. A written cell that is General in the file and has a number format in the model (a
-    Date written, a format pasted) gets a copy of its style with that format (its font, fill and borders kept), made
-    once for each style and format. A cell with a number format in the file keeps it: the model may not know it,
-    since a formatted cell with no value is not read."""
-
-    # The formats VBA's own writes give a General cell (a Date, with or without its time), as Excel stores them.
-    WRITTEN = {"m/d/yyyy": 14, "m/d/yyyy h:mm": 22}
+    """The workbook's cell styles. A written cell whose number format in the model is not its style's in the file (a
+    Date written to a General cell, a format pasted or cleared) gets a copy of its style with that format (its font,
+    fill and borders kept), made once for each style and format."""
 
     def __init__(self, xml):
         self.root = etree.fromstring(xml)
         self.xfs = self.root.find(q("cellXfs"))
-        self.codes = dict(BUILTIN_FORMATS)
-        for nf in self.root.iter(q("numFmt")):
-            self.codes[int(nf.get("numFmtId"))] = nf.get("formatCode")
-        self.ids = {**{code: i for i, code in self.codes.items()}, **self.WRITTEN}
+        self.codes = {**BUILTIN_FORMATS, **custom_formats(self.root)}
+        self.ids = {code: i for i, code in sorted(self.codes.items(), reverse=True)}  # the lowest number of each
         self.made = {}
         self.changed = False
 
-    def _code(self, s):
-        xf = self.xfs[s] if self.xfs is not None and 0 <= s < len(self.xfs) else None
-        return self.codes.get(int(xf.get("numFmtId", 0)), "General") if xf is not None else "General"
-
     def apply(self, el, numfmt):
-        s, want = int(el.get("s", 0)), numfmt
-        if want is None or self.xfs is None or self._code(s) != "General":
+        if self.xfs is None:
+            return
+        s, want = int(el.get("s", 0)), numfmt or "General"
+        have = int(self.xfs[s].get("numFmtId", 0)) if 0 <= s < len(self.xfs) else 0
+        if want in (self.codes.get(have), builtin_code(have)) or self.ids.get(want) == have:
             return
         if (s, want) not in self.made:
             xf = copy.deepcopy(self.xfs[s]) if 0 <= s < len(self.xfs) else etree.Element(q("xf"))
@@ -260,6 +258,8 @@ def _shared_string_index(pkg):
 
 
 def _changed_cells(old, new):
+    """[(row, column, cell)] for each cell whose content or number format the macros changed; the cell is None for
+    one that is empty now."""
     keys = set()
     for sheet in (old, new):
         for r, row in sheet.rows.items():
@@ -268,7 +268,7 @@ def _changed_cells(old, new):
     out = []
     for r, c in sorted(keys):
         a, b = _stored(old, r, c), _stored(new, r, c)
-        if _cell_key(a) != _cell_key(b):
+        if _cell_key(a) != _cell_key(b) or old.format_at(r, c) != new.format_at(r, c):
             out.append((r, c, b if _cell_key(b) is not None else None))
     return out
 
@@ -288,6 +288,11 @@ def _patch_sheet(xml, old, new, cells, sst, selected, filter_changed, default_cm
     root = etree.fromstring(xml)
     data = root.find(q("sheetData"))
     rows = {int(r.get("r")): r for r in data.findall(q("row"))}
+    column_styles = [
+        (int(col.get("min")), int(col.get("max")), col.get("style"))
+        for col in root.iterfind(f"{q('cols')}/{q('col')}")
+        if col.get("style")
+    ]
     cmap = {}
     for row in rows.values():
         for c_el in row.findall(q("c")):
@@ -297,25 +302,34 @@ def _patch_sheet(xml, old, new, cells, sst, selected, filter_changed, default_cm
     touched = {(r, c) for r, c, _ in cells}
     if any(cmap.get(k) is not None and _has_shared_formula(cmap[k]) for k in touched):
         _expand_shared_formulas(cmap, old)
+    keep_formula = set()  # array formulas entered with Ctrl+Shift+Enter whose values alone changed
     for k in touched:
         el = cmap.get(k)
         f = el.find(q("f")) if el is not None else None
         if f is not None and f.get("t") == "array" and k not in old.spills:
-            raise VBANotImplemented(f"changing part of an array formula ({old.name}!{col_letters(k[1])}{k[0]})")
+            before, now = _stored(old, *k), _stored(new, *k)
+            if now is None or now.formula != before.formula or now.value is PENDING:
+                raise VBANotImplemented(f"changing part of an array formula ({old.name}!{col_letters(k[1])}{k[0]})")
+            keep_formula.add(k)
 
     touched_rows = set()
     for r, c, cell in cells:
         el = cmap.get((r, c))
-        if cell is None:
+        if cell is None:  # emptied, or empty with another number format than it had (Clear, a pasted format)
+            want = new.format_at(r, c)
+            if el is None and want != old.inherited_format(r, c):
+                el = cmap[(r, c)] = _new_cell(_row(data, rows, r), r, c, column_styles)
             if el is not None:
                 _clear(el)
+                if styles is not None:
+                    styles.apply(el, want)
                 if not (set(el.attrib) - {"r"}):
                     el.getparent().remove(el)
                     del cmap[(r, c)]
             continue
         if el is None:
             row_el = _row(data, rows, r)
-            el = _new_cell(row_el, r, c)
+            el = _new_cell(row_el, r, c, column_styles)
             cmap[(r, c)] = el
         spill = new.spills.get((r, c)) if cell.formula is not None else None
         if spill is not None:
@@ -323,7 +337,7 @@ def _patch_sheet(xml, old, new, cells, sst, selected, filter_changed, default_cm
             if cm is None:
                 raise VBANotImplemented("saving a new dynamic-array formula in a workbook that has none")
             spill = (spill, cm)
-        _set(el, cell, sst, spill, (r, c) in new.spill_owner)
+        _set(el, cell, sst, spill, (r, c) in new.spill_owner, keep=el.find(q("f")) if (r, c) in keep_formula else None)
         if styles is not None:
             styles.apply(el, cell.numfmt)
         touched_rows.add(r)
@@ -385,10 +399,15 @@ def _row(data, rows, r):
     return row_el
 
 
-def _new_cell(row_el, r, c):
+def _new_cell(row_el, r, c, column_styles=()):
+    """A cell the file has no record of. It looks as its row does, or else its column."""
     el = etree.Element(q("c"), r=f"{col_letters(c)}{r}")
-    if row_el.get("customFormat") == "1" and row_el.get("s"):
-        el.set("s", row_el.get("s"))
+    if row_el.get("customFormat") in ("1", "true"):
+        style = row_el.get("s")
+    else:
+        style = next((s for first, last, s in column_styles if first <= c <= last), None)
+    if style:
+        el.set("s", style)
     for existing in row_el.findall(q("c")):
         if parse_area(existing.get("r"))[1] > c:
             existing.addprevious(el)
@@ -397,11 +416,14 @@ def _new_cell(row_el, r, c):
     return el
 
 
-def _set(el, cell, sst, dynamic=None, spilled=False):
-    """dynamic: (spill rectangle, cm) for a dynamic-array formula; spilled: a value filled in by one."""
+def _set(el, cell, sst, dynamic=None, spilled=False, keep=None):
+    """dynamic: (spill rectangle, cm) for a dynamic-array formula; spilled: a value filled in by one; keep: the
+    cell's <f> element, to stay as the file has it."""
     _clear(el)
     value = cell.value
-    if cell.formula is not None:
+    if keep is not None:
+        el.append(keep)
+    elif cell.formula is not None:
         f = etree.SubElement(el, q("f"))
         f.text = file_syntax(cell.formula)
         if dynamic is not None:

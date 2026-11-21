@@ -5,7 +5,7 @@ errors are XLError. Anything not modelled raises VBANotImplemented so a run neve
 continues on a guess.
 """
 
-from .addresses import DATE_FORMAT_IDS, area_text, col_letters, col_num, is_date_format, parse_area, shift_formula
+from .addresses import area_text, col_letters, col_num, parse_area, shift_formula
 from .application import Application, Globals, WorkbooksCollection
 from .book import VOLATILE, Book, FormulaInfo, NameObject, NamesCollection, SheetGroup, SheetsCollection
 from .constants import MAX_COL, MAX_ROW, PENDING, XL_CONSTANTS
@@ -36,8 +36,6 @@ __all__ = [
     "col_letters",
     "parse_area",
     "area_text",
-    "DATE_FORMAT_IDS",
-    "is_date_format",
     "shift_formula",
     "Cell",
     "Table",

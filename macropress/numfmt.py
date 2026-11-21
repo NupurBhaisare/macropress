@@ -2,8 +2,10 @@
 write leaves in a cell that already has one. Checked against Excel (tests/parity)."""
 
 import re
+from decimal import ROUND_HALF_UP, Decimal
 
 from .errors import VBANotImplemented
+from .values import fifteen
 
 # The formats Excel knows by number, as VBA's NumberFormat gives them under US regional settings.
 BUILTIN_FORMATS = {
@@ -87,11 +89,41 @@ def is_date_format(code):
     return False
 
 
+_SIGN_WRITTEN_OUT = re.compile(r'\[\$[^\]-]+(-[^\]]*)?\]|"[^"]*[$€£¥₹][^"]*"|\\[$€£¥₹]|[€£¥₹]')
+
+
+def writes_a_currency_sign(code):
+    """Whether a format writes a currency sign out as text, where Excel's own currency formats leave it to the
+    regional settings: "$"#,##0.00, [$€-407] #,##0.00, £0.00."""
+    return bool(code) and _SIGN_WRITTEN_OUT.search(code) is not None
+
+
 def is_currency_format(code):
     """Whether VBA reads a number so formatted as a Currency: its format has the currency sign of the regional
     settings, as Excel's own Currency and Accounting formats do ($#,##0.00). A sign written out in the format
     ("$"#,##0.00, [$€-407]) does not count."""
     return bool(code) and "$" in _LITERALS.sub("", code)
+
+
+_FIXED = re.compile(r"(#,##)?0(\.0+)?")
+
+
+def shown(x, code=None):
+    """The text a cell shows for a number, in a column with room for it, or None where that is not modelled. It is
+    for the General format, where the number is short enough to stand as it is (Excel rounds one of more than 11
+    characters, and writes a very large or small one with an exponent), and for formats of plain digits: 0, 0.00,
+    #,##0 and #,##0.00, with any number of decimals."""
+    number = Decimal(repr(fifteen(x)))
+    if code in (None, "General", TEXT):
+        text = format(number, "f")
+        text = text.rstrip("0").rstrip(".") if "." in text else text
+        return text if len(text) <= 11 and (x == 0 or abs(x) >= 1e-5) else None
+    fixed = _FIXED.fullmatch(code)
+    if fixed is None:
+        return None
+    decimals = len(fixed.group(2) or ".") - 1
+    rounded = number.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+    return f"{rounded:,.{decimals}f}" if fixed.group(1) else f"{rounded:.{decimals}f}"
 
 
 # Excel's own formats by what they are for. A write that brings a format of another kind (a date into a cell of

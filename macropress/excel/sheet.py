@@ -3,6 +3,7 @@
 import re
 
 from ..errors import VBANotImplemented, VBARuntimeError
+from ..numfmt import after_entry, shown
 from ..values import (
     VBAObject,
     default_value,
@@ -30,6 +31,10 @@ class Sheet(VBAObject):
         self.code_name = code_name
         self.state = state
         self.rows = {}  # row -> {col: Cell}
+        self.col_widths = []  # [(first column, last column, width)] of the columns given a width
+        self.default_width = 9.14  # of the others: 8.43 characters and the cell's padding
+        self.row_formats = {}  # row -> the number format of a row formatted as a whole (None: General)
+        self.col_formats = {}  # col -> the number format of a column formatted as a whole, when not General
         self.hidden_rows = set()
         self.manual_hidden = set()  # hidden rows not explained by a filter
         self.hidden_cols = set()
@@ -73,32 +78,55 @@ class Sheet(VBAObject):
             )
         return cell.value
 
+    def shown_text(self, r, c):
+        """Range.Text: what the cell shows. Text shows whole. A number, TRUE or an error shows whole only where its
+        column has room for it; where it has not, Excel rounds the number to fit or shows ####, which is not
+        modelled: it turns on the column's width and its font."""
+        text = self.cell_text(r, c)
+        if text and not isinstance(self.raw_value(r, c), str) and len(text) > self.room(c):
+            raise VBANotImplemented(
+                f"the displayed text of {self.name}!{col_letters(c)}{r}: {text} may not fit its column as it stands"
+            )
+        return text
+
+    def room(self, c):
+        """How many characters of the default font a column shows."""
+        width = next((w for first, last, w in self.col_widths if first <= c <= last), self.default_width)
+        return int(width - 0.71) if c not in self.hidden_cols else 0  # a width in the file includes the cell's padding
+
     def cell_text(self, r, c):
-        """The text the cell shows (General format only)."""
+        """The text the cell shows in a column wide enough for it: what a filter matches. A number is shown by its
+        number format, for the formats numfmt.shown covers."""
         cell = self.get_cell(r, c)
         if cell is None or cell.value is None:
             return ""
         v = self.raw_value(r, c)
         if isinstance(v, bool):
             return "TRUE" if v else "FALSE"
-        if isinstance(v, str):
-            return v
         if isinstance(v, (int, float)):
-            if cell.numfmt not in (None, "General"):
+            text = shown(float(v), cell.numfmt)
+            if text is None:
                 raise VBANotImplemented(
-                    f"the displayed text of {self.name}!{col_letters(c)}{r} (number format {cell.numfmt!r})"
+                    f"the displayed text of {self.name}!{col_letters(c)}{r}: "
+                    f"{format_double(float(v))} in the number format {cell.numfmt or 'General'}"
                 )
-            return format_double(float(v))
+            return text
         return str(v)
 
-    def put(self, r, c, value, formula=None, numfmt=None, dynamic=False):
-        """Write a cell. numfmt is the format the value brings (a Date's), which Excel gives only a General cell: one
-        with a number format keeps it, even emptied (a cell with no value or formula stays for its format)."""
-        self.changed = True
-        self.book.forget_formulas(self, r, c, r, c)
-        old = self.rows.get(r, {}).get(c)
-        numfmt = old.numfmt if old is not None and old.numfmt is not None else numfmt
-        if value is None and formula is None and numfmt is None:
+    def inherited_format(self, r, c):
+        """The number format of a cell the sheet holds no record of: its row's, or else its column's."""
+        if r in self.row_formats:
+            return self.row_formats[r]
+        return self.col_formats.get(c)
+
+    def format_at(self, r, c):
+        """The cell's number format; None for General."""
+        cell = self.rows.get(r, {}).get(c)
+        return cell.numfmt if cell is not None else self.inherited_format(r, c)
+
+    def _store(self, r, c, value, formula, numfmt):
+        """Keep the cell, or no record of it when it is empty and formatted as its row or column is anyway."""
+        if value is None and formula is None and numfmt == self.inherited_format(r, c):
             row = self.rows.get(r)
             if row is not None:
                 row.pop(c, None)
@@ -106,24 +134,49 @@ class Sheet(VBAObject):
                     del self.rows[r]
         else:
             self.rows.setdefault(r, {})[c] = Cell(value, formula, numfmt)
-            if formula is not None:
-                self.book.register_formula(self, r, c, formula, dynamic)
+
+    def put(self, r, c, value, formula=None, numfmt=None, dynamic=False):
+        """Write a cell. numfmt is the format the value brings (a Date's, the 0% of "5%"): a General cell takes it,
+        and so does one with a format of Excel's own for something else (see numfmt.after_entry). Any other cell
+        keeps its format, even emptied (a cell with no value or formula stays for its format)."""
+        self.changed = True
+        self.book.forget_formulas(self, r, c, r, c)
+        self._store(r, c, value, formula, after_entry(self.format_at(r, c), numfmt))
+        if formula is not None:
+            self.book.register_formula(self, r, c, formula, dynamic)
         self.book.cells_changed(self, r, c, r, c)
 
     def clear_rect(self, r1, c1, r2, c2, formats=False):
-        """Clear the cells' contents; their number formats stay, as with ClearContents, unless formats (Clear)."""
+        """Clear the cells' contents; their number formats stay, as with ClearContents, unless formats (Clear), which
+        leaves the cells General."""
         self.changed = True
         self.book.forget_formulas(self, r1, c1, r2, c2)
         for r in [r for r in self.rows if r1 <= r <= r2]:
-            row = self.rows[r]
-            for c in [c for c in row if c1 <= c <= c2]:
-                if row[c].numfmt is not None and not formats:
-                    row[c] = Cell(None, None, row[c].numfmt)
-                else:
-                    del row[c]
-            if not row:
-                del self.rows[r]
+            for c in [c for c in self.rows[r] if c1 <= c <= c2]:
+                self._store(r, c, None, None, None if formats else self.rows[r][c].numfmt)
+        if formats:
+            self._reset_formats(r1, c1, r2, c2)
         self.book.cells_changed(self, r1, c1, r2, c2)
+
+    def _reset_formats(self, r1, c1, r2, c2):
+        """Make the rectangle's cells General where a format of their row or column would say otherwise."""
+        if c1 == 1 and c2 == MAX_COL:
+            for r in [r for r in self.row_formats if r1 <= r <= r2]:
+                del self.row_formats[r]
+        if r1 == 1 and r2 == MAX_ROW:
+            for c in [c for c in self.col_formats if c1 <= c <= c2]:
+                del self.col_formats[c]
+        rows = [r for r in self.row_formats if r1 <= r <= r2 and self.row_formats[r] is not None]
+        cols = [c for c in self.col_formats if c1 <= c <= c2]
+        if len(rows) * (c2 - c1 + 1) + len(cols) * (r2 - r1 + 1) > 1_000_000:
+            raise VBANotImplemented("Clear on part of a great many formatted rows or columns")
+        for r in rows:
+            for c in range(c1, c2 + 1):
+                self.rows.setdefault(r, {}).setdefault(c, Cell())
+        for c in cols:
+            for r in range(r1, r2 + 1):
+                if r not in self.row_formats:
+                    self.rows.setdefault(r, {}).setdefault(c, Cell())
 
     def check_merged(self, r1, c1, r2, c2):
         for m in self.merged:
@@ -295,7 +348,7 @@ class Sheet(VBAObject):
         return self.in_filter_mode()
 
     def m_showalldata(self):
-        if self.autofilter is None:
+        if not self.in_filter_mode():  # nothing is filtered out: Excel refuses
             raise VBARuntimeError(1004, "ShowAllData method of Worksheet class failed")
         af = self.autofilter
         af.criteria = {}

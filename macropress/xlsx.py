@@ -24,42 +24,13 @@ from .excel import (
     parse_area,
     shift_formula,
 )
+from .numfmt import builtin_code, vba_code
 from .values import XLError, date_to_serial
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
-BUILTIN_FORMATS = {
-    0: "General",
-    1: "0",
-    2: "0.00",
-    3: "#,##0",
-    4: "#,##0.00",
-    9: "0%",
-    10: "0.00%",
-    11: "0.00E+00",
-    12: "# ?/?",
-    13: "# ??/??",
-    14: "mm-dd-yy",
-    15: "d-mmm-yy",
-    16: "d-mmm",
-    17: "mmm-yy",
-    18: "h:mm AM/PM",
-    19: "h:mm:ss AM/PM",
-    20: "h:mm",
-    21: "h:mm:ss",
-    22: "m/d/yy h:mm",
-    37: "#,##0 ;(#,##0)",
-    38: "#,##0 ;[Red](#,##0)",
-    39: "#,##0.00;(#,##0.00)",
-    40: "#,##0.00;[Red](#,##0.00)",
-    45: "mm:ss",
-    46: "[h]:mm:ss",
-    47: "mmss.0",
-    48: "##0.0E+0",
-    49: "@",
-}
 CUSTOM_OPS = {
     "equal": "=",
     "lessThan": "<",
@@ -181,14 +152,19 @@ def _shared_strings(pkg):
 
 
 def _cell_formats(pkg):
+    """The number format of each cell style, as VBA names it; General is None."""
     if "xl/styles.xml" not in pkg.names:
         return []
     root = pkg.xml("xl/styles.xml")
-    codes = dict(BUILTIN_FORMATS)
-    for nf in root.iter(NS + "numFmt"):
-        codes[int(nf.get("numFmtId"))] = nf.get("formatCode")
+    codes = custom_formats(root)
     xfs = root.find(NS + "cellXfs")
-    return [codes.get(int(xf.get("numFmtId", 0)), "General") for xf in (xfs if xfs is not None else [])]
+    ids = [int(xf.get("numFmtId", 0)) for xf in (xfs if xfs is not None else [])]
+    return [codes.get(i) or builtin_code(i) for i in ids]
+
+
+def custom_formats(styles_root):
+    """{number: code} of the number formats the file defines itself."""
+    return {int(nf.get("numFmtId")): vba_code(nf.get("formatCode")) for nf in styles_root.iter(NS + "numFmt")}
 
 
 def _read_sheet(pkg, part, sheet, sst, formats, book):
@@ -222,11 +198,31 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             area = parse_area(sq) or active
             sheet.sel = area
             sheet.active_cell = (active[0], active[1])
+
+    def number_format(style):
+        style = int(style or 0)
+        code = formats[style] if style < len(formats) else "General"
+        return None if code == "General" else code
+
+    default = root.find(NS + "sheetFormatPr")
+    if default is not None and default.get("defaultColWidth"):
+        sheet.default_width = float(default.get("defaultColWidth"))
+    cols = root.find(NS + "cols")
+    for col in cols if cols is not None else []:
+        first, last = int(col.get("min")), int(col.get("max"))
+        if col.get("width"):
+            sheet.col_widths.append((first, last, float(col.get("width"))))
+        if col.get("hidden") in ("1", "true"):
+            sheet.hidden_cols.update(range(first, last + 1))
+        if number_format(col.get("style")) is not None:  # cells of the column with no record of their own
+            sheet.col_formats.update(dict.fromkeys(range(first, last + 1), number_format(col.get("style"))))
     data = root.find(NS + "sheetData")
     for row in data if data is not None else []:
         r = int(row.get("r"))
         if row.get("hidden") in ("1", "true"):
             sheet.hidden_rows.add(r)
+        if row.get("customFormat") in ("1", "true"):
+            sheet.row_formats[r] = number_format(row.get("s"))
         cells = {}
         for c in row.findall(NS + "c"):
             m = re.match(r"([A-Z]+)(\d+)$", c.get("r"))
@@ -234,8 +230,7 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             t = c.get("t", "n")
             v = c.find(NS + "v")
             f = c.find(NS + "f")
-            style = int(c.get("s", 0))
-            numfmt = formats[style] if style < len(formats) else "General"
+            numfmt = number_format(c.get("s"))
             value = None
             if t == "inlineStr":
                 is_ = c.find(NS + "is")
@@ -275,9 +270,9 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
                         sheet.array_cells[(r, col)] = area
                 if formula is not None and value is None:  # saved without its value: calculated when it is read
                     value, uncalculated = PENDING, True
-            if value is None and formula is None:
-                continue
-            cells[col] = Cell(value, formula, numfmt if numfmt != "General" else None)
+            if value is None and formula is None and numfmt == sheet.inherited_format(r, col):
+                continue  # an empty cell formatted as its row or column is anyway: no record needed
+            cells[col] = Cell(value, formula, numfmt)
         if cells:
             sheet.rows[r] = cells
     for (ar, ac), (r1, c1, r2, c2) in [*sheet.spills.items(), *sheet.array_cells.items()]:
@@ -285,11 +280,6 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             for cc in range(c1, c2 + 1):
                 if (rr, cc) != (ar, ac):  # its values are the formula's: unknown once the formula's are
                     sheet.spill_owner[(rr, cc)] = (ar, ac)
-    cols = root.find(NS + "cols")
-    for col in cols if cols is not None else []:
-        if col.get("hidden") in ("1", "true"):
-            for i in range(int(col.get("min")), int(col.get("max")) + 1):
-                sheet.hidden_cols.add(i)
     merges = root.find(NS + "mergeCells")
     for mc in merges if merges is not None else []:
         area = parse_area(mc.get("ref"))

@@ -387,6 +387,11 @@ def parse_number_text(s):
     return None
 
 
+def fifteen(x):
+    """A number as Excel compares, rounds and shows it: to 15 significant digits."""
+    return float(f"{x:.14e}")
+
+
 def typed_number(text):
     """A number as Excel reads it from digits typed in a cell or written in a formula: its first 15 significant
     digits, the rest dropped (1234567890123456789 is 1234567890123450000). None when it is too large for a number:

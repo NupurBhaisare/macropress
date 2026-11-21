@@ -43,11 +43,14 @@ ASSUMPTIONS = {
         "unverified",
         "Re-applying an AutoFilter shows every row of its range that passes, including rows hidden by hand.",
     ),
-    "AF-MATCH-TEXT": ("verified", "AutoFilter criteria match the cell's text, ignoring case, with * ? ~ wildcards."),
-    "END-IGNORES-HIDDEN": ("unverified", "Range.End treats hidden rows like visible ones."),
+    "AF-MATCH-TEXT": (
+        "verified",
+        "An AutoFilter criterion is matched against the text each cell shows (1,250.00, not 1250), ignoring case and "
+        "the spaces around it, with * ? ~ wildcards; <, > and <> against a number go by the cell's value.",
+    ),
     "COPY-VISIBLE-IN-FILTER": ("verified", "Copying a range on a filtered sheet copies only the visible rows."),
     "COPY-HIDDEN-NO-FILTER": (
-        "unverified",
+        "verified",
         "Copying a range with hidden rows on a sheet that is not filtered copies the hidden rows too.",
     ),
     "FILTER-WRITES-VISIBLE": (
@@ -58,11 +61,6 @@ ASSUMPTIONS = {
     "PASTE-WHOLE-ROWS": (
         "verified",
         "Pasting whole copied rows replaces the whole target rows; blank source cells clear target cells.",
-    ),
-    "WRITE-TEXT-CONVERSION": (
-        "unverified",
-        "Text written to a cell is converted the way typed input is: numeric text becomes a number, "
-        "'TRUE'/'FALSE' a Boolean, a leading apostrophe forces text.",
     ),
     "WRITE-EMPTY-STRING": ("unverified", 'Writing "" to a cell leaves it empty.'),
     "FORMULAS-RECALCULATED": (
@@ -83,8 +81,9 @@ ASSUMPTIONS = {
     "SPILL-BLANK-AS-ZERO": ("unverified", "A blank cell in a dynamic-array result (SORT, UNIQUE, ...) spills as 0."),
     "SORT-TEXT-ORDER": (
         "verified",
-        "Sorting (Sort, SORT) orders numbers, then text, then logical values, then errors, with blanks last; text "
-        "compares character by character ignoring case (accents only break ties), symbols before digits before "
+        "Sorting (Sort, SORT) orders numbers, then text (the empty text first), then FALSE, TRUE and errors (which "
+        "keep the order they were in), with blank cells last whichever the direction; text compares character by "
+        "character ignoring case (accents only break ties), symbols before digits before "
         "letters, hyphens and apostrophes included. Checked in Excel for Mac; Windows Excel may ignore hyphens and "
         "apostrophes.",
     ),
@@ -108,9 +107,16 @@ ASSUMPTIONS = {
         "Round(2.675, 2) is 2.68 and Round(1.015, 2) is 1.01.",
     ),
     "CDEC-WINDOWS-ONLY": ("limitation", "CDec is evaluated, although Mac VBA reportedly cannot compile it."),
-    "NUMBER-TEXT-FORMAT": (
+    "CURRENCY-SIGN-IN-FORMAT": (
         "limitation",
-        "Numbers are turned into text with '.' as the decimal separator, as US regional settings write them.",
+        'A number whose format writes a currency sign out ("$"#,##0.00, [$€-407]) is read as a Double, as Excel reads '
+        "it where that sign is not the currency of the machine's regional settings. Where it is, Excel may read a "
+        "Currency, rounded to four decimals.",
+    ),
+    "DATE-FORMAT-NAME": (
+        "limitation",
+        "Excel's own short date format is named m/d/yyyy (with a time, m/d/yyyy h:mm), as NumberFormat names it under "
+        "US regional settings. Under other settings Excel names it by the machine's short date.",
     ),
     "DATE-TEXT-US": (
         "limitation",

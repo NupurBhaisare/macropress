@@ -35,15 +35,20 @@ class Criterion:
         raise NotImplementedError
 
 
+def _shown(sheet, r, c):
+    """A cell's text as a filter matches it: without the spaces before and after it."""
+    return sheet.cell_text(r, c).strip(" ")
+
+
 class ValuesCriterion(Criterion):
     """A list of allowed texts, plus (optionally) blanks: what Excel saves for a ticked list."""
 
     def __init__(self, values, blank=False):
-        self.values = {v.casefold() for v in values}
+        self.values = {v.strip(" ").casefold() for v in values}
         self.blank = blank
 
     def matches(self, sheet, r, c):
-        text = sheet.cell_text(r, c)
+        text = _shown(sheet, r, c)
         if text == "":
             return self.blank
         return text.casefold() in self.values
@@ -53,31 +58,27 @@ class ValuesCriterion(Criterion):
 
 
 class OpCriterion(Criterion):
+    """A comparison with one value. Text is matched without regard to case or to spaces before and after it, in the
+    cell or in the criterion: "West" finds " west " too."""
+
     def __init__(self, op, operand):
         self.op, self.operand = op, operand
 
     def matches(self, sheet, r, c):
-        text = sheet.cell_text(r, c)
-        op, operand = self.op, self.operand
-        if op in ("=", "<>"):
-            if operand == "":
-                hit = text == ""
-            else:
-                value = sheet.raw_value(r, c)
-                num = parse_number_text(operand)
-                if num is not None and is_numeric_value(value):
-                    hit = float(value) == float(num)
-                else:
-                    hit = wildcard_regex(operand).fullmatch(text) is not None
-            return hit if op == "=" else not hit
-        if text == "":
-            return False
         value = sheet.raw_value(r, c)
-        num = parse_number_text(operand)
-        if num is not None and is_numeric_value(value):
-            a, b = float(value), float(num)
-        else:
-            a, b = text.casefold(), operand.casefold()
+        blank = value is None or (isinstance(value, str) and value == "")
+        op, operand = self.op, self.operand.strip(" ")
+        if operand == "" and op in ("=", "<>"):
+            return blank == (op == "=")
+        number = parse_number_text(operand)
+        numbers = number is not None and is_numeric_value(value)
+        if op == "=":  # "is": the cell shows this text, so 1250 formatted 1,250.00 is not "1250"
+            return wildcard_regex(operand).fullmatch(_shown(sheet, r, c)) is not None
+        if op == "<>":  # "is not": by value against a number, by what the cell shows against text
+            return float(value) != number if numbers else wildcard_regex(operand).fullmatch(_shown(sheet, r, c)) is None
+        if blank:
+            return False
+        a, b = (float(value), number) if numbers else (_shown(sheet, r, c).casefold(), operand.casefold())
         return {">": a > b, "<": a < b, ">=": a >= b, "<=": a <= b}[op]
 
     def describe(self):

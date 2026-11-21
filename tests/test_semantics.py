@@ -416,7 +416,111 @@ EXCEL_SHOWS = """
 """
 
 
+# What Excel for Mac 16 holds in a General cell after VBA writes each text to it: the type VBA reads, the value, and
+# the number format the cell is left with.
+EXCEL_STORES = """
+-5 | Double:-5 | General
+- 5 | Double:-5 | General
+(5) | Double:-5 | General
++5 | Double:5 | General
+001 | Double:1 | General
+5- | String:5- | General
+$5 | Currency:5 | $#,##0_);[Red]($#,##0)
+-$5 | Currency:-5 | $#,##0_);[Red]($#,##0)
+5$ | String:5$ | General
+.5% | Double:0.005 | 0.00%
+%5 | Double:0.05 | 0%
+(5%) | Double:-0.05 | 0%
+$5% | String:$5% | General
+1,234 | Double:1234 | #,##0
+1,234.5 | Double:1234.5 | #,##0.00
+1,23 | String:1,23 | General
+1 000 | String:1 000 | General
+1e3 | Double:1000 | 0.00E+00
+1e1000 | String:1e1000 | 0.00E+00
+1 1/2 | Double:1.5 | # ?/?
+true | Boolean:True | General
+ TRUE | String: TRUE | General
+#n/a | Error:Error 2042 | General
+N/A | String:N/A | General
+'5 | String:5 | General
+= | String:= | General
+1.5.2 | String:1.5.2 | General
+"""
+
+
 class ExcelModel(Runner):
+    def test_text_written_to_a_cell_is_read_as_excel_reads_typed_text(self):
+        stores = {text: rest for text, rest in (line.split(" | ", 1) for line in EXCEL_STORES.strip("\n").splitlines())}
+        lines = []
+        for i, text in enumerate(stores, 1):
+            lines.append(f'Range("A{i}").Value = "{text}"')
+            lines.append(
+                f'Debug.Print TypeName(Range("A{i}").Value) & ":" & CStr(Range("A{i}").Value) & " | " & '
+                f'Range("A{i}").NumberFormat'
+            )
+        self.assertEqual(dict(zip(stores, self.prints("\n".join(lines)), strict=True)), stores)
+        for date in ("1/2", "Jan 5", "3:30", "2024-01-05"):  # Excel reads these by the machine's regional settings
+            with self.assertRaises(VBANotImplemented):
+                self.prints(f'Range("A1").Value = "{date}"')
+        with self.assertRaises(VBARuntimeError) as ctx:  # a number too large to type: Excel refuses the formula
+            self.prints('Range("A1").Formula = "=1E+308*10"')
+        self.assertEqual(ctx.exception.number, 1004)
+
+    def test_a_filter_matches_what_cells_show_and_a_write_reaches_only_the_rows_it_shows(self):
+        code = (
+            "Function Shown() As String\nFor i = 2 To 7\nShown = Shown & IIf(Rows(i).Hidden, 0, 1)\nNext\nEnd Function\n"
+            "Sub Test()\nDim arr(1 To 6, 1 To 1)\n"
+            'For i = 1 To 7\nCells(i, 1).Value = Array("Region", "West", "West ", "East", " west", "Wes", "West1")(i - 1)\n'
+            'Cells(i, 2).Value = "n" & i\nNext\nFor i = 1 To 6\narr(i, 1) = "a" & i\nNext\n'
+            'Range("A1:B7").AutoFilter Field:=1, Criteria1:="West "\nDebug.Print Shown()\n'
+            'Range("B2:B7").Value = "x"\nRange("C2:C7").Value = arr\nRange("B4:B5").ClearContents\n'
+            "ActiveSheet.ShowAllData\n"
+            'For i = 2 To 7\nt = t & Cells(i, 2).Value & Cells(i, 3).Value & "/"\nNext\nDebug.Print t\n'
+            'Range("A1:B7").AutoFilter Field:=1, Criteria1:="<>West"\nDebug.Print Shown()\n'
+            'Range("A1:B7").AutoFilter Field:=1, Criteria1:=Array("WEST", "Wes"), Operator:=xlFilterValues\n'
+            "Debug.Print Shown()\n"
+            "ActiveSheet.AutoFilterMode = False\nOn Error Resume Next\nActiveSheet.ShowAllData\nDebug.Print Err.Number\n"
+            'Err.Clear\nRange("A1:B7").AutoFilter Field:=9, Criteria1:="x"\nDebug.Print Err.Number, ActiveSheet.AutoFilterMode\n'
+            "End Sub\n"
+        )
+        # text is matched without regard to case or to the spaces around it, in the cell or the criterion; a value,
+        # an array (starting again at each run of shown rows) or a clear reaches only the rows the filter shows;
+        # ShowAllData with nothing filtered is error 1004, and so is a field the filter does not have
+        self.assertEqual(
+            self.run_vba(code)[0],
+            ["110100", "xa1/xa2/n4/a1/n6/n7/", "001011", "110110", "1004", "1004 False"],
+        )
+
+    def test_end_passes_over_hidden_rows_and_columns_and_a_sort_keeps_excels_order(self):
+        code = (
+            "Function Listed() As String\nFor i = 21 To 34\nv = Cells(i, 9).Value\n"
+            'Listed = Listed & IIf(IsError(v), "#", IIf(IsEmpty(v), "_", CStr(v))) & "|"\nNext\nEnd Function\n'
+            "Sub Test()\n"
+            "For i = 1 To 8\nCells(i, 1).Value = i\nNext\nFor j = 2 To 6\nCells(1, j).Value = j\nNext\n"
+            'Rows("3:4").Hidden = True\nDebug.Print Range("A1").End(xlDown).Row, Range("A5").End(xlUp).Row\n'
+            'Rows("7:8").Hidden = True\nDebug.Print Cells(Rows.Count, 1).End(xlUp).Row\n'
+            'Columns("B:C").Hidden = True\nColumns("F").Hidden = True\n'
+            'Debug.Print Range("A1").End(xlToRight).Column, Cells(1, Columns.Count).End(xlToLeft).Column\n'
+            'vals = Array(3, "b", True, 1, "a", False, Empty, 2.5, "\'10", "B", 0, CVErr(xlErrNA), CVErr(xlErrDiv0))\n'
+            'For i = 0 To 12\nCells(i + 21, 9).Value = vals(i)\nNext\nRange("I34").Formula = "="""""\n'
+            'Range("I21:I34").Sort Key1:=Range("I21"), Order1:=xlAscending, Header:=xlNo\nDebug.Print Listed()\n'
+            'Range("I21:I34").Sort Key1:=Range("I21"), Order1:=xlDescending, Header:=xlNo\nDebug.Print Listed()\n'
+            "End Sub\n"
+        )
+        # numbers, then text (the empty text first), FALSE, TRUE, errors in the order they were, blanks last; the
+        # other way round everything but the blanks is reversed
+        self.assertEqual(
+            self.run_vba(code)[0],
+            [
+                "8 1",
+                "6",
+                "5 5",
+                "0|1|2.5|3||10|a|b|B|False|True|#|#|_|",
+                "#|#|True|False|b|B|a|10||3|2.5|1|0|_|",
+            ],
+        )
+
     def test_formulas_give_what_excel_gives(self):
         shows = dict(line.split(" | ") for line in EXCEL_SHOWS.strip().splitlines())
         lines = [

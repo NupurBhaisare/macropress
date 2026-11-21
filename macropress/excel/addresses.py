@@ -70,17 +70,6 @@ def area_text(r1, c1, r2, c2, absolute=True, row_absolute=None, column_absolute=
     return f"{a}:{dc}{col_letters(c2)}{dr}{r2}"
 
 
-DATE_FORMAT_IDS = set(range(14, 23)) | {45, 46, 47}
-
-
-def is_date_format(code):
-    if not code or code in ("General", "@"):
-        return False
-    stripped = re.sub(r'"[^"]*"|\[[^\]]*\]|\\.|_.|\*.', "", code)
-    first = stripped.split(";")[0]
-    return bool(re.search(r"[dmyhs]", first, re.I)) and not re.search(r"[0#?]", first)
-
-
 # One end of a reference's area: a cell (A1), a column (A) or a row (1), each part with or without its $.
 _END = re.compile(r"(?:(\$?)([A-Za-z]{1,3}))?(?:(\$?)(\d+))?")
 

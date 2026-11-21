@@ -14,6 +14,7 @@ class Literal:
 @dataclass
 class Name:
     name: str
+    suffix: str = ""  # a type character written after it: Left$ gives a String, where Left gives a Variant
 
 
 @dataclass
@@ -278,3 +279,8 @@ class Module:
     procedures: dict = field(default_factory=dict)  # lower name -> ProcSource
     options: list = field(default_factory=list)
     source: str = ""
+    externals: dict = field(default_factory=dict)  # lower name -> (name, library) of each Declare
+    enums: dict = field(default_factory=dict)  # lower Enum name -> its members' names
+    types: dict = field(default_factory=dict)  # lower name -> name of each Type ... End Type
+    conditional: bool = False  # it uses #If: read as 64-bit Excel for Windows reads it
+    decl_error: str | None = None  # why its declarations could not be read, told when one of its procedures is used

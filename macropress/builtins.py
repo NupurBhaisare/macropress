@@ -5,7 +5,7 @@ import datetime as dt
 import inspect
 import math
 import re
-from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from .errors import VBANotImplemented, VBARuntimeError
 from .values import (
@@ -13,6 +13,7 @@ from .values import (
     EPOCH,
     NOTHING,
     NULL,
+    CDecValue,
     VBAArray,
     VBAObject,
     XLError,
@@ -22,14 +23,17 @@ from .values import (
     default_value,
     hex_value,
     is_numeric_value,
+    like_decimal,
     parse_number_text,
     to_bool,
+    to_currency,
     to_date,
     to_decimal,
     to_double,
     to_long,
     to_number,
     to_str,
+    two_digit_year,
     type_name,
     vba_round,
 )
@@ -157,6 +161,53 @@ VB_CONSTANTS = {
     "vbuppercase": 1,
     "vblowercase": 2,
     "vbpropercase": 3,
+    "vbobjecterror": -2147221504,
+    "vbdatabasecompare": 2,
+    "vbdefaultbutton4": 768,
+    "vbapplicationmodal": 0,
+    "vbsystemmodal": 4096,
+    "vbmsgboxhelpbutton": 16384,
+    "vbmsgboxsetforeground": 65536,
+    "vbmsgboxright": 524288,
+    "vbmsgboxrtlreading": 1048576,
+    "vbusesystem": 0,
+    "vbfirstjan1": 1,
+    "vbfirstfourdays": 2,
+    "vbfirstfullweek": 3,
+    "vbgeneraldate": 0,
+    "vblongdate": 1,
+    "vbshortdate": 2,
+    "vblongtime": 3,
+    "vbshorttime": 4,
+    "vbtrue": -1,
+    "vbfalse": 0,
+    "vbusedefault": -2,
+    "vbblack": 0,
+    "vbred": 255,
+    "vbgreen": 65280,
+    "vbyellow": 65535,
+    "vbblue": 16711680,
+    "vbmagenta": 16711935,
+    "vbcyan": 16776960,
+    "vbwhite": 16777215,
+    "vbnormal": 0,
+    "vbreadonly": 1,
+    "vbhidden": 2,
+    "vbsystem": 4,
+    "vbvolume": 8,
+    "vbdirectory": 16,
+    "vbarchive": 32,
+    "vbwide": 4,
+    "vbnarrow": 8,
+    "vbunicode": 64,
+    "vbfromunicode": 128,
+    "vbmethod": 1,
+    "vbget": 2,
+    "vblet": 4,
+    "vbset": 8,
+    "vbdataobject": 13,
+    "vbuserdefinedtype": 36,
+    "vblonglong": 20,
 }
 
 ERROR_CODES = {
@@ -385,9 +436,11 @@ def b_str(ctx, frame, x):
     if x is NULL:
         return NULL
     s = to_str(x)
-    if is_numeric_value(x) and to_number(x) >= 0:
-        return " " + s
-    return s
+    if not is_numeric_value(x):
+        return s
+    if s.startswith(("0.", "-0.")):  # Str writes a fraction without its zero: " .5", "-.25"
+        s = s.replace("0.", ".", 1)
+    return " " + s if to_number(x) >= 0 else s
 
 
 # --- conversions ---
@@ -426,11 +479,11 @@ def b_csng(ctx, frame, x):
 
 def b_cdec(ctx, frame, x):
     ctx.ledger.note("CDEC-WINDOWS-ONLY")
-    return to_decimal(x)
+    return CDecValue(to_decimal(x))
 
 
 def b_ccur(ctx, frame, x):
-    return to_decimal(x).quantize(Decimal("0.0001"), rounding=ROUND_HALF_EVEN)
+    return to_currency(x)
 
 
 def b_cbool(ctx, frame, x):
@@ -457,7 +510,7 @@ def b_int(ctx, frame, x):
     if isinstance(v, int):
         return v
     r = math.floor(v)
-    return float(r) if isinstance(v, float) else Decimal(r)
+    return float(r) if isinstance(v, float) else like_decimal(v, Decimal(r))
 
 
 def b_fix(ctx, frame, x):
@@ -465,11 +518,12 @@ def b_fix(ctx, frame, x):
     if isinstance(v, int):
         return v
     r = math.trunc(v)
-    return float(r) if isinstance(v, float) else Decimal(r)
+    return float(r) if isinstance(v, float) else like_decimal(v, Decimal(r))
 
 
 def b_abs(ctx, frame, x):
-    return abs(to_number(x))
+    v = to_number(x)
+    return like_decimal(v, abs(v))
 
 
 def b_sgn(ctx, frame, x):
@@ -496,7 +550,7 @@ def b_log(ctx, frame, x):
 
 
 def b_round(ctx, frame, x, digits=0):
-    ctx.ledger.note("ROUND-DECIMAL")
+    ctx.ledger.note("ROUND-HALF-EVEN")
     return vba_round(default_value(x), to_long(digits))
 
 
@@ -553,7 +607,7 @@ def b_weekday(ctx, frame, d, firstdayofweek=1):
 
 
 def b_dateserial(ctx, frame, year, month, day):
-    y, m, d_ = to_long(year), to_long(month), to_long(day)
+    y, m, d_ = two_digit_year(to_long(year)), to_long(month), to_long(day)
     y += (m - 1) // 12
     m = (m - 1) % 12 + 1
     return dt.datetime(y, m, 1) + dt.timedelta(days=d_ - 1)
@@ -703,6 +757,7 @@ def b_vartype(ctx, frame, x):
         "Integer": 2,
         "Long": 3,
         "Double": 5,
+        "Currency": 6,
         "Decimal": 14,
         "Date": 7,
         "String": 8,
@@ -720,7 +775,8 @@ def b_vartype(ctx, frame, x):
 
 
 def b_array(ctx, frame, *items):
-    return VBAArray.from_list(list(items))
+    """Array(...): from 0, or from 1 in a module with Option Base 1."""
+    return VBAArray.from_list(list(items), lo=frame._module._base if frame is not None else 0)
 
 
 def b_ubound(ctx, frame, arr, dimension=1):
@@ -746,6 +802,16 @@ def b_choose(ctx, frame, index, *choices):
     return NULL
 
 
+def b_switch(ctx, frame, *pairs):
+    """The value after the first condition that is true; Null when none is."""
+    if len(pairs) % 2:
+        raise VBARuntimeError(5, "Invalid procedure call or argument")
+    for condition, value in zip(pairs[::2], pairs[1::2], strict=True):
+        if default_value(condition) is not NULL and to_bool(condition):
+            return value
+    return NULL
+
+
 def b_cverr(ctx, frame, number):
     code = to_long(number)
     return XLError(ERROR_CODES.get(code, f"#ERR{code}"))
@@ -759,6 +825,9 @@ def b_rgb(ctx, frame, red, green, blue):
 
 
 MSGBOX_ANSWERS = {"ok": 1, "cancel": 2, "abort": 3, "retry": 4, "ignore": 5, "yes": 6, "no": 7}
+# The buttons each kind of MsgBox shows: vbOKOnly, vbOKCancel, vbAbortRetryIgnore, vbYesNoCancel, vbYesNo, vbRetryCancel
+MSGBOX_BUTTONS = [("ok",), ("ok", "cancel"), ("abort", "retry", "ignore"), ("yes", "no", "cancel"), ("yes", "no"),
+                  ("retry", "cancel")]  # fmt: skip
 
 
 def b_msgbox(ctx, frame, prompt, buttons=0, title=None, helpfile=None, context=None):
@@ -767,12 +836,18 @@ def b_msgbox(ctx, frame, prompt, buttons=0, title=None, helpfile=None, context=N
     if kind == 0:
         ctx.ledger.note("MSGBOX-NO-UI")
         return 1
-    if ctx.answers:
-        answer = to_str(ctx.answers.pop(0)).strip()
-        return MSGBOX_ANSWERS.get(answer.lower()) or to_long(answer)
-    raise VBANotImplemented(
-        f"MsgBox asks the user a question ({to_str(prompt)[:60]!r}); pass an answer (yes, no, ok, ...)"
-    )
+    question = to_str(prompt)[:60]
+    if not ctx.answers:
+        raise VBANotImplemented(f"MsgBox asks the user a question ({question!r}); pass an answer (yes, no, ok, ...)")
+    answer = to_str(ctx.answers.pop(0)).strip().lower()
+    offered = MSGBOX_BUTTONS[kind] if kind < len(MSGBOX_BUTTONS) else ()
+    by_number = {str(MSGBOX_ANSWERS[name]): name for name in offered}
+    answer = by_number.get(answer, answer)
+    if answer not in offered:  # not a button of this box: a mistake in the answers, not an error of the macro
+        raise VBANotImplemented(
+            f"the answer {answer!r} to the MsgBox question {question!r}: its buttons are {', '.join(offered)}"
+        )
+    return MSGBOX_ANSWERS[answer]
 
 
 def b_inputbox(ctx, frame, prompt, title=None, default=None, xpos=None, ypos=None, helpfile=None, context=None):
@@ -807,10 +882,18 @@ _FUNCS.update({"cstr": b_cstr, "instrrev": b_instrrev})
 
 def _wrap(fn, name):
     signature = inspect.signature(fn)
+    params = list(signature.parameters.values())[2:]
 
     def call(ctx, frame, args, kwargs):
         # VBA names the argument Compare; the Python parameter is compare_
         kwargs = {("compare_" if k == "compare" else k): v for k, v in (kwargs or {}).items()}
+        if None in args:  # an argument left out between commas, MsgBox "Done", , "Title": its default
+            args = list(args)
+            for i, p in enumerate(params[: len(args)]):
+                if args[i] is None and p.kind is p.POSITIONAL_OR_KEYWORD:
+                    if p.default is p.empty:
+                        raise VBARuntimeError(449, f"Argument not optional for {name}")
+                    args[i] = p.default
         try:
             signature.bind(ctx, frame, *args, **kwargs)
         except TypeError as err:
@@ -821,5 +904,7 @@ def _wrap(fn, name):
 
 
 BUILTINS = {name: _wrap(fn, name) for name, fn in _FUNCS.items()}
-# The builtins with a Compare argument: left out, it is the calling module's Option Compare, so they get its frame.
+# The builtins that go by the calling module's options, so they get its frame: those with a Compare argument (left
+# out, it is the module's Option Compare), and Array (Option Base).
 TEXT_COMPARE = {name for name, fn in _FUNCS.items() if "compare_" in inspect.signature(fn).parameters}
+FRAME_AWARE = TEXT_COMPARE | {"array"}

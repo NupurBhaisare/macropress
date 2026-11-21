@@ -10,13 +10,29 @@ On Error GoTo exactly.
 import datetime as dt
 import keyword
 import os
+import re
+from decimal import Decimal
 
 from . import nodes as n
-from .builtins import BUILTINS, TEXT_COMPARE, VB_CONSTANTS
+from .builtins import BUILTINS, FRAME_AWARE, VB_CONSTANTS
 from .compiler import Compiler
-from .errors import VBACompileError, VBANotImplemented
+from .errors import VBACompileError, VBANotImplemented, VBAParseError
 from .excel import XL_CONSTANTS, Globals
-from .values import EMPTY, NOTHING, NULL, op_add, op_concat, op_div, op_intdiv, op_mod, op_mul, op_neg, op_sub
+from .values import (
+    EMPTY,
+    NOTHING,
+    NULL,
+    NUMERIC_TYPES,
+    normalise_type,
+    op_add,
+    op_concat,
+    op_div,
+    op_intdiv,
+    op_mod,
+    op_mul,
+    op_neg,
+    op_sub,
+)
 from .vbparse import parse_procedure
 
 CANONICAL = {
@@ -121,6 +137,7 @@ NOT_MODELLED = {
             "Shell SendKeys AppActivate Beep Command GetSetting GetAllSettings SaveSetting DeleteSetting LoadPicture"
         ),
         "it shows a UserForm": "Load Unload",
+        "it runs code or a formula held in text": "Evaluate Run ExecuteExcel4Macro",
         "it is not covered yet": (
             "StrConv Filter FormatCurrency FormatNumber FormatPercent FormatDateTime MonthName WeekdayName DatePart Hex "
             "Oct ChrW AscW Atn Cos Sin Tan Pmt PPmt IPmt PV FV NPV IRR MIRR NPer Rate DDB SLN SYD Partition QBColor GoSub"
@@ -128,6 +145,42 @@ NOT_MODELLED = {
     }.items()
     for name in names.split()
 }
+
+
+# Excel's own objects that are not modelled, by the names VBA code uses without a qualifier. Read as an undeclared
+# variable, ActiveWindow.Zoom = 80 would be "object required", an error On Error Resume Next skips.
+NOT_MODELLED_GLOBALS = {
+    name.lower(): name
+    for name in (
+        "ActiveWindow ActiveChart ActivePrinter Windows Charts Names CommandBars Dialogs AddIns UserForms Assistant "
+        "ThisCell Excel4MacroSheets DialogSheets"
+    ).split()
+}
+# The libraries VBA's own functions can be named with: VBA.Left, Strings.Trim, DateTime.Now.
+VBA_LIBRARIES = {"vba", "strings", "datetime", "conversion", "information", "interaction", "math", "financial"}
+
+# How a comparison reads a number against a string goes by how each side is declared (values.compare): a numeric
+# type "n", a String "s", or a Variant "v". What a VBA function returns, where it is not a Variant; with a type
+# character (Left$) every one of them returns a String.
+FUNCTION_KINDS = {
+    **dict.fromkeys("cstr replace join strreverse typename inputbox".split(), "s"),
+    **dict.fromkeys(
+        "cint clng cdbl csng cbyte ccur cbool cdate len instrrev asc val sqr exp log rgb timer rnd ubound lbound "
+        "vartype isnumeric isdate isempty isnull isarray iserror ismissing isobject msgbox".split(),
+        "n",
+    ),
+}
+MEMBER_KINDS = {
+    **dict.fromkeys(("name", "address", "codename"), "s"),
+    **dict.fromkeys(("row", "column", "count", "index"), "n"),
+}
+
+
+def type_kind(type_name):
+    t = normalise_type(type_name)
+    if t == "string":
+        return "s"
+    return "n" if t in NUMERIC_TYPES or t in ("boolean", "date") else "v"
 
 
 def _undefined(proc, name):
@@ -172,6 +225,15 @@ def ident_ok(name):
     return name.isidentifier() and not keyword.iskeyword(name)
 
 
+# Names that Python's own numbers, text and dates answer to (s.count, x.real). A VBA value that is no object must say
+# so when asked for one (error 424), so these members are asked through rt.member, never as Python attributes.
+PYTHON_ATTRIBUTES = {a for t in (int, float, str, bool, dt.datetime, Decimal, type(None)) for a in dir(t)}
+
+
+def member_ok(name):
+    return ident_ok(name) and name not in PYTHON_ATTRIBUTES
+
+
 def py_ident(name):
     """`name` as a Python identifier. A workbook's VBA project names its modules and procedures; nothing checks
     those names before they reach the generated code."""
@@ -197,6 +259,17 @@ class Conversion:
         self.object_modules = {  # a sheet's module or the workbook's, by name: in code, its name stands for the object
             m.name.lower(): m for m in project.modules.values() if m.kind in ("document", "workbook")
         }
+        modules = list(project.modules.values())
+        self.externals = {k: v for m in modules for k, v in m.externals.items()}  # Declare: name -> (name, library)
+        self.enums = {k: v for m in modules for k, v in m.enums.items()}  # Enum name -> its members
+        self.types = {k: v for m in modules for k, v in m.types.items()}  # Type ... End Type names
+
+    def type_name(self, name, what):
+        """A declared type as the runtime knows it: an Enum is a Long. A Type ... End Type is not modelled."""
+        key = normalise_type(name)
+        if key in self.types:
+            raise VBANotImplemented(f"{what}: the user-defined type {self.types[key]} (Type ... End Type)")
+        return "long" if key in self.enums else name
 
     # --- what to convert ---
     def find(self, name, module=None):
@@ -227,6 +300,8 @@ class Conversion:
             key = (module.name.lower(), src.name.lower())
             if key in self.procs:
                 continue
+            if module.decl_error:
+                raise VBAParseError(module.decl_error)
             proc = parse_procedure(src)
             proc.module = module
             self.procs[key] = (module, src, proc)
@@ -310,10 +385,11 @@ class Conversion:
                     decls.append(self.decl_tuple(decl, module, {}))
         opts = [o.lower() for o in module.options]
         kind = f", kind={module.kind!r}" if module.kind != "standard" else ""
+        base = ", option_base=1" if "option base 1" in opts else ""
         return [
             f"{self.module_id(module)} = rt.Module({module.name!r}, decls={decls!r}, "
             f"option_compare_text={'option compare text' in opts}, "
-            f"option_explicit={'option explicit' in opts}{kind})"
+            f"option_explicit={'option explicit' in opts}{kind}{base})"
         ]
 
     def decl_tuple(self, decl, module, consts, static=False):
@@ -326,7 +402,7 @@ class Conversion:
                 bounds.append((int(lo_v), int(const_value(hi, consts, self, module))))
         if decl.is_new:
             raise VBANotImplemented(f"'Dim {decl.name} As New {decl.type_name}'")
-        t = (decl.name, bounds, decl.dynamic, decl.type_name)
+        t = (decl.name, bounds, decl.dynamic, self.type_name(decl.type_name, decl.name))
         return t + (True,) if static else t
 
     def module_consts(self, module):
@@ -476,12 +552,16 @@ class ProcGen:
         first = src.first_line
         self.source_lines = {first + i: line.strip() for i, line in enumerate(src.text.split("\n"))}
         self.locals, self.arrays, self.consts, self.decls = set(), set(), {}, []
+        self.types = {}  # the declared type of each of the procedure's own names
+        self.select_kinds = {}
         for p in proc.params:
             self.locals.add(p.name.lower())
+            self.types[p.name.lower()] = conv.type_name(p.type_name, p.name)
             if p.is_array:
                 self.arrays.add(p.name.lower())
         if proc.kind == "function":
             self.locals.add(proc.name.lower())
+            self.types[proc.name.lower()] = conv.type_name(proc.return_type, proc.name)
         module_consts = conv.module_consts(module)
         for s in walk_statements(proc.body):
             if isinstance(s, n.Const):
@@ -490,6 +570,7 @@ class ProcGen:
             elif isinstance(s, n.Dim):
                 for decl in s.decls:
                     self.locals.add(decl.name.lower())
+                    self.types[decl.name.lower()] = conv.type_name(decl.type_name, decl.name)
                     if decl.bounds is not None or decl.dynamic:
                         self.arrays.add(decl.name.lower())
                     self.decls.append(
@@ -564,7 +645,89 @@ class ProcGen:
                 return True, mc[key]
         return False, None
 
+    # --- how an expression is declared: a numeric type "n", a String "s" or a Variant "v" ---
+    def declared_type(self, name):
+        key = name.lower()
+        if key in self.types:
+            return self.types[key]
+        modules = [self.module] + [m for m in self.conv.project.modules.values() if m is not self.module]
+        for mod in modules:
+            for d in mod.declarations:
+                if isinstance(d, n.Dim) and (mod is self.module or (d.scope or "").lower() in ("public", "global")):
+                    for decl in d.decls:
+                        if decl.name.lower() == key:
+                            return self.conv.type_name(decl.type_name, decl.name)
+        return "variant"
+
+    def kind(self, e):
+        if isinstance(e, n.Literal):
+            return "s" if isinstance(e.value, str) else "n"
+        if isinstance(e, n.Paren):
+            return self.kind(e.expr)
+        if isinstance(e, n.Unary):
+            return "n" if self.kind(e.operand) != "v" else "v"
+        if isinstance(e, n.BinOp):
+            left, right = self.kind(e.left), self.kind(e.right)
+            if "v" in (left, right):
+                return "v"
+            if e.op == "&" or (e.op == "+" and left == right == "s"):
+                return "s"
+            return "n"
+        if isinstance(e, n.Name):
+            key = e.name.lower()
+            what = self.resolve(e.name)
+            if what == "keyword":
+                return "n" if key in ("true", "false") else "v"
+            if what == "var":
+                return "v" if self.is_array(e.name) else type_kind(self.declared_type(e.name))
+            if what in ("const", "vbconst"):
+                value = self.const(key)[1] if what == "const" else VB_CONSTANTS[key]
+                return "s" if isinstance(value, str) else "n"
+            if what == "xlconst":
+                return "n"
+            if what == "proc":
+                return self.proc_kind(*self.conv.find(e.name, self.module))
+            if what == "builtin":
+                return "s" if e.suffix == "$" else FUNCTION_KINDS.get(key, "v")
+            return "v"
+        if isinstance(e, n.Member):
+            module, src = self.qualified_proc(e)
+            if src is not None:
+                return self.proc_kind(module, src)
+            if isinstance(e.obj, n.Name) and e.obj.name.lower() in self.conv.enums and not self.is_var(e.obj.name):
+                return "n"
+            return MEMBER_KINDS.get(e.name.lower(), "v")
+        if isinstance(e, n.Call):
+            func = e.func
+            if isinstance(func, n.Name):
+                if self.is_var(func.name):  # an element of an array: as the array is declared
+                    return type_kind(self.declared_type(func.name)) if self.is_array(func.name) else "v"
+                return self.kind(func)
+            if isinstance(func, n.Member):
+                module, src = self.qualified_proc(func)
+                return self.proc_kind(module, src) if src is not None else "v"
+        return "v"
+
+    def proc_kind(self, module, src):
+        """How a Function's result is declared, read from its first line: ... ) As String, or Function Name$( ..."""
+        header = src.text.split("\n")[0].split("'")[0]
+        if re.search(rf"(?i)\bFunction\s+{re.escape(src.name)}\$", header):
+            return "s"
+        m = re.search(r"(?i)\bAs\s+([\w.]+)\s*$", header.rpartition(")")[2] if ")" in header else header)
+        return type_kind(self.conv.type_name(m.group(1), src.name)) if m else "v"
+
+    def kinds(self, *exprs):
+        """The k argument of a comparison: left out when every side is a Variant."""
+        k = "".join(self.kind(e) for e in exprs)
+        return f", k={k!r}" if k.strip("v") else ""
+
     # --- expressions ---
+    def given_a_value(self, name):
+        """Whether the module's code ever assigns to the name, or loops with it."""
+        word = re.escape(name)
+        assigned = rf"(?im)(?:^|:|\bthen\b|\belse\b)[ \t]*(?:set[ \t]+|let[ \t]+)?{word}[ \t]*(?:\([^=\n]*\))?[ \t]*="
+        return re.search(rf"{assigned}|(?i:\bfor[ \t]+(?:each[ \t]+)?{word}\b)", self.module.source) is not None
+
     def resolve(self, name):
         """What a bare name means, in the order VBA looks it up."""
         key = name.lower()
@@ -590,6 +753,11 @@ class ProcGen:
             return "xlconst"
         if key in GLOBAL_MEMBERS:
             return "global"
+        if key in NOT_MODELLED_GLOBALS:
+            raise VBANotImplemented(f"{self.proc.name}: {NOT_MODELLED_GLOBALS[key]} is not modelled")
+        if re.match(r"(?:vb|xl|mso)[a-z]", key) and not self.given_a_value(name):
+            # a name the code only reads: a constant of VBA or Excel this does not know, not a variable left Empty
+            raise VBANotImplemented(f"{self.proc.name}: the constant {name} is not modelled")
         if self.explicit:
             raise VBACompileError(f"{self.proc.name}: variable not defined: {name}")
         self.locals.add(key)  # an undeclared name is a new Variant variable
@@ -647,14 +815,27 @@ class ProcGen:
         """Argument list. For calls to VBA procedures a plain variable is passed by reference."""
         out = []
         for a in args:
-            if a.expr is None:
+            e = a.expr
+            if e is None:
                 code = "None"
-            elif byref and isinstance(a.expr, n.Name) and self.resolve(a.expr.name) == "var":
-                code = f"rt.ref({self.var_ref(a.expr.name)[1]}, {a.expr.name!r})"
+            elif byref and isinstance(e, n.Name) and self.resolve(e.name) == "var":
+                code = f"rt.ref({self.var_ref(e.name)[1]}, {e.name!r})"
+            elif byref and isinstance(e, n.Call) and isinstance(e.func, n.Name) and self.is_var(e.func.name):
+                code = f"rt.ref_item({self.var_ref(e.func.name)[0]}, {self.args(e.args)})"  # an array's element
             else:
-                code = self.ex(a.expr)
-            out.append(f"{a.name}={code}" if a.name else code)
+                code = self.ex(e)
+            if a.name and not ident_ok(a.name):  # From:=1: a name Python keeps for itself
+                out.append(f"**{{{a.name!r}: {code}}}")
+            else:
+                out.append(f"{a.name}={code}" if a.name else code)
         return ", ".join(out)
+
+    def library_function(self, e):
+        """VBA.Left or Strings.Trim: the VBA function named with its library, as a plain name; else None."""
+        if isinstance(e, n.Member) and isinstance(e.obj, n.Name) and e.obj.name.lower() in VBA_LIBRARIES:
+            if not self.is_var(e.obj.name) and e.name.lower() in BUILTINS:
+                return n.Name(e.name)
+        return None
 
     def ex(self, e):
         if isinstance(e, n.Literal):
@@ -669,13 +850,21 @@ class ProcGen:
             module, src = self.qualified_proc(e)
             if src is not None:
                 return f"{self.conv.py_name(module, src)}(xl)"
+            if self.library_function(e) is not None:
+                return self.ex(self.library_function(e))
+            if isinstance(e.obj, n.Name) and e.obj.name.lower() in self.conv.enums and not self.is_var(e.obj.name):
+                found, value = self.const(e.name.lower())  # Colour.Red: a member of an Enum, named with it
+                if found:
+                    return py_literal(value)
             obj = self.ex(e.obj)
-            return f"{obj}.{e.name}" if ident_ok(e.name) else f"rt.member({obj}, {e.name!r})"
+            return f"{obj}.{e.name}" if member_ok(e.name) else f"rt.member({obj}, {e.name!r})"
         if isinstance(e, n.Call):
             return self.call_expr(e)
         if isinstance(e, n.BinOp):
             fn = BINOPS[e.op]
             extra = self.text_arg if fn in COMPARISONS else ""
+            if fn in COMPARISONS and fn != "like":
+                extra += self.kinds(e.left, e.right)
             return f"rt.{fn}({self.ex(e.left)}, {self.ex(e.right)}{extra})"
         if isinstance(e, n.Unary):
             return f"rt.{'not_' if e.op == 'not' else 'neg'}({self.ex(e.operand)})"
@@ -698,8 +887,9 @@ class ProcGen:
             if src is not None:
                 a = self.args(e.args, byref=True)
                 return f"{self.conv.py_name(module, src)}(xl{', ' + a if a else ''})"
+            self.check_external(func.name)
             if key in BUILTINS:
-                args = [a for a in (self.args(e.args), "_frame=v" if key in TEXT_COMPARE else "") if a]
+                args = [a for a in (self.args(e.args), "_frame=v" if key in FRAME_AWARE else "") if a]
                 return f"rt.{CANONICAL.get(key, func.name)}({', '.join(args)})"
             if key in GLOBAL_MEMBERS:
                 return f"{self.global_ref(func.name)}({self.args(e.args)})"
@@ -709,10 +899,23 @@ class ProcGen:
             if src is not None:
                 a = self.args(e.args, byref=True)
                 return f"{self.conv.py_name(module, src)}(xl{', ' + a if a else ''})"
-            obj = self.ex(func.obj)
-            target = f"{obj}.{func.name}" if ident_ok(func.name) else f"rt.member({obj}, {func.name!r})"
-            return f"{target}({self.args(e.args)})"
-        return f"{self.ex(func)}({self.args(e.args)})"
+            if self.library_function(func) is not None:
+                return self.call_expr(n.Call(self.library_function(func), e.args))
+            obj, a = self.ex(func.obj), self.args(e.args)
+            if member_ok(func.name):
+                return f"{obj}.{func.name}({a})"
+            return f"rt.member({obj}, {func.name!r}{', ' + a if a else ''})"
+        # what a call gave, indexed: Split(s, ",")(0)
+        return f"rt.index({self.ex(func)}, {self.args(e.args)})"
+
+    def check_external(self, name):
+        """A procedure of another library, brought in with Declare: calling it is not modelled."""
+        if name.lower() in self.conv.externals:
+            declared, library = self.conv.externals[name.lower()]
+            raise VBANotImplemented(
+                f"{self.proc.name}: {declared} is a procedure of {library} (a Declare statement); "
+                "calls outside VBA and Excel are not modelled"
+            )
 
     # --- simple statements ---
     def simple(self, s):
@@ -749,6 +952,17 @@ class ProcGen:
     def assign(self, s):
         t = s.target
         value = self.ex(s.value)
+        if isinstance(t, n.Call) and isinstance(t.func, n.Name) and t.func.name.lower() == "mid" and not s.is_set:
+            if not self.is_var("mid") and self.conv.find("mid", self.module)[1] is None and 2 <= len(t.args) <= 3:
+                # The Mid statement: Mid(s, 2, 1) = "X" puts the text over part of the variable's.
+                text, start, *length = [self.ex(a.expr) for a in t.args]
+                changed = f"rt.mid_statement({text}, {start}, {length[0] if length else 'None'}, {value})"
+                return self.assign_to(t.args[0].expr, changed, False, s.line)
+        return self.assign_to(t, value, s.is_set, s.line)
+
+    def assign_to(self, t, value, is_set, line):
+        """The Python line that gives the target `t` the value of the Python expression `value`."""
+        s = n.Assign(t, None, is_set, line=line)
         if s.is_set:
             if isinstance(t, n.Name):
                 if not self.is_var(t.name):
@@ -775,7 +989,7 @@ class ProcGen:
             return f"rt.let({self.ex(t)}, {value})"
         if isinstance(t, n.Member):
             obj = self.ex(t.obj)
-            if ident_ok(t.name):
+            if member_ok(t.name):
                 return f"{obj}.{t.name} = {value}"
             return f"rt._let_member({obj}, {t.name!r}, {value})"
         raise VBANotImplemented(f"line {s.line}: assignment target {type(t).__name__}")
@@ -788,6 +1002,7 @@ class ProcGen:
                 module, src = self.conv.find(t.name, self.module)
                 if src is not None:
                     return f"{self.conv.py_name(module, src)}(xl)"
+                self.check_external(t.name)
                 if key in BUILTINS:
                     return f"rt.{CANONICAL.get(key, t.name)}()"
                 if key in GLOBAL_MEMBERS:
@@ -810,7 +1025,7 @@ class ProcGen:
                 x.byval,
                 x.optional,
                 (const_value(x.default, self.consts, self.conv, self.module) if x.default is not None else None),
-                x.type_name,
+                self.types[x.name.lower()],
                 x.paramarray,
             )
             for x in p.params
@@ -834,7 +1049,7 @@ class ProcGen:
         frame = (
             f"    v = rt.Frame(xl, {self.conv.module_id(self.module)}, {p.name!r}, decls={self.decls!r}, "
             f"params={params!r}, args=args, kwargs=kwargs"
-            + (f", returns=({p.name!r}, {p.return_type!r})" if p.kind == "function" else "")
+            + (f", returns=({p.name!r}, {self.types[p.name.lower()]!r})" if p.kind == "function" else "")
             + ")"
         )
         return header + [frame] + body_lines
@@ -856,7 +1071,7 @@ class ProcGen:
         self.emit(ind, "try:")
         for c in code_lines:
             self.emit(ind + 1, c)
-        self.emit(ind, "except rt.VBARuntimeError as err:")
+        self.emit(ind, "except rt.CAUGHT as err:")
         self.emit(ind + 1, f"rt.skipped(err, {line})")
 
     def cond(self, expr, line, on_error=True):
@@ -940,6 +1155,8 @@ class ProcGen:
                 self.emit(ind, f"while {test}:")
             else:
                 self.emit(ind, "while True:")
+                if not s.post:
+                    self.emit(ind + 1, "rt.tick()")  # no condition to count its turns: see runtime.tick
             self.block(s.body, ind + 1)
             if s.post:
                 kind, c = s.post
@@ -965,15 +1182,7 @@ class ProcGen:
             self.emit(ind, f"{name} = {subject}")
             first = True
             for conds, body in s.cases:
-                tests = []
-                for c in conds:
-                    if c.kind == "eq":
-                        tests.append(f"rt.case_eq({name}, {self.ex(c.expr)}{self.text_arg})")
-                    elif c.kind == "range":
-                        tests.append(f"rt.case_range({name}, {self.ex(c.expr)}, {self.ex(c.expr2)}{self.text_arg})")
-                    else:
-                        raise VBANotImplemented(f"line {line}: Case Is ...")
-                test = " or ".join(tests)
+                test = " or ".join(self.case_test(name, s.subject, c) for c in conds)
                 if self.rn:
                     test = f"rt.cond_rn(lambda: {test}, True, {line})"
                 self.emit(ind, f"{'if' if first else 'elif'} {test}:")
@@ -991,6 +1200,16 @@ class ProcGen:
                 self.emit(ind, c)
             return
         self.wrap_rn(ind, line, self.simple(s))
+
+    def case_test(self, value, subject, c):
+        """The test of one Case condition against the Select Case value held in the Python name `value`."""
+        if c.kind == "eq":
+            return f"rt.case_eq({value}, {self.ex(c.expr)}{self.text_arg}{self.kinds(subject, c.expr)})"
+        if c.kind == "range":
+            k = self.kinds(subject, c.expr, c.expr2)
+            return f"rt.case_range({value}, {self.ex(c.expr)}, {self.ex(c.expr2)}{self.text_arg}{k})"
+        compare = BINOPS[c.op]  # Case Is > 5
+        return f"rt.cond(rt.{compare}({value}, {self.ex(c.expr)}{self.text_arg}{self.kinds(subject, c.expr)}))"
 
     # --- step-by-step form (any GoTo / On Error GoTo) ---
     def flat(self, problems):
@@ -1014,7 +1233,7 @@ class ProcGen:
                 self.emit(4, c)
         if not code:
             self.emit(3, "pass")
-        self.emit(2, "except rt.VBARuntimeError as err:")
+        self.emit(2, "except rt.CAUGHT as err:")
         self.emit(3, "pc = rt.handle_error(v, err, pc, w, DEPTH, KIND[pc])")
         if self.proc.kind == "function":
             self.emit(1, f"return rt.result(v, {self.proc.name!r})")
@@ -1080,7 +1299,7 @@ class ProcGen:
             return [
                 "try:",
                 f"    w.append({self.ex(ins.a)})",
-                "except rt.VBARuntimeError:",
+                "except rt.CAUGHT:",
                 "    w.append(rt.NOTHING)",
                 "    raise",
                 nxt,
@@ -1088,16 +1307,10 @@ class ProcGen:
         if op == "with_pop":
             return ["w.pop()", nxt]
         if op == "select":
+            self.select_kinds[ins.a] = ins.b
             return [f"st[{ins.a}] = rt.val({self.ex(ins.b)})", nxt]
         if op == "case":
-            tests = []
-            for c in ins.b:
-                if c.kind == "eq":
-                    tests.append(f"rt.case_eq(st[{ins.a}], {self.ex(c.expr)}{self.text_arg})")
-                elif c.kind == "range":
-                    tests.append(f"rt.case_range(st[{ins.a}], {self.ex(c.expr)}, {self.ex(c.expr2)}{self.text_arg})")
-                else:
-                    raise VBANotImplemented("Case Is ...")
+            tests = [self.case_test(f"st[{ins.a}]", self.select_kinds[ins.a], c) for c in ins.b]
             return [f"pc = {i + 1} if ({' or '.join(tests)}) else rt.jump(w, DEPTH, {ins.c})"]
         raise VBANotImplemented(f"instruction {op}")
 

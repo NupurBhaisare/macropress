@@ -5,15 +5,14 @@ complete parse tree, which is converted here into the nodes in nodes.py.
 """
 
 import bisect
-import datetime as dt
 import re
 
 from simpleparse.parser import Parser
 from vb2py import utils as vb_utils, vbparser
 
 from . import nodes as n
-from .errors import VBAParseError
-from .values import hex_value
+from .errors import VBANotImplemented, VBAParseError
+from .values import hex_value, parse_date_text
 
 _PARSER = None
 
@@ -70,10 +69,159 @@ PROC_START = re.compile(
 PROC_END = re.compile(r"^\s*End\s+(Sub|Function|Property)\b", re.I)
 
 
+# What vb2py's grammar does not read is rewritten first, line for line, so every line keeps its number.
+
+# Conditional compilation is decided as 64-bit Excel for Windows decides it.
+COMPILER_CONSTANTS = {"vba7": -1, "vba6": -1, "win64": -1, "win32": -1, "win16": 0, "mac": 0}
+_CC_TOKEN = re.compile(r"\s*(?:(\d+)|([A-Za-z_]\w*)|(<>|<=|>=|[=<>()+\-*]))")
+_CC_BINARY = {"or": 1, "xor": 1, "and": 2, "=": 4, "<>": 4, "<": 4, ">": 4, "<=": 4, ">=": 4, "+": 5, "-": 5, "*": 6}
+
+
+def _cc_value(text, consts):
+    """A conditional-compilation expression's value, with VBA's True (-1) and False (0); a name not defined is 0."""
+    tokens, pos = [], 0
+    while text[pos:].strip():
+        m = _CC_TOKEN.match(text, pos)
+        if m is None:
+            raise VBAParseError(f"cannot read the conditional-compilation expression {text.strip()!r}")
+        number, name, op = m.groups()
+        tokens.append(int(number) if number is not None else (name or op).lower())
+        pos = m.end()
+    at = 0
+
+    def prefix():
+        nonlocal at
+        if at >= len(tokens):
+            raise VBAParseError(f"cannot read the conditional-compilation expression {text.strip()!r}")
+        tok = tokens[at]
+        at += 1
+        if isinstance(tok, int):
+            return tok
+        if tok == "(":
+            value = expr(0)
+            at += 1  # the closing parenthesis
+            return value
+        if tok == "not":
+            return ~expr(3)
+        if tok == "-":
+            return -expr(7)
+        if tok in ("true", "false"):
+            return -1 if tok == "true" else 0
+        return consts.get(tok, COMPILER_CONSTANTS.get(tok, 0))
+
+    def expr(min_power):
+        nonlocal at
+        left = prefix()
+        while at < len(tokens) and _CC_BINARY.get(tokens[at], -1) >= min_power:
+            op = tokens[at]
+            at += 1
+            right = expr(_CC_BINARY[op] + 1)
+            left = {
+                "or": lambda a, b: a | b, "xor": lambda a, b: a ^ b, "and": lambda a, b: a & b,
+                "=": lambda a, b: -(a == b), "<>": lambda a, b: -(a != b), "<": lambda a, b: -(a < b),
+                ">": lambda a, b: -(a > b), "<=": lambda a, b: -(a <= b), ">=": lambda a, b: -(a >= b),
+                "+": lambda a, b: a + b, "-": lambda a, b: a - b, "*": lambda a, b: a * b,
+            }[op](left, right)  # fmt: skip
+        return left
+
+    return expr(0)
+
+
+def conditional_compilation(lines, where):
+    """Keep the lines of the #If branches that are compiled, and blank the others and the # lines themselves.
+    Returns the lines and whether there were any."""
+    out, stack, consts, active, used = [], [], {}, True, False
+    for number, line in enumerate(lines, 1):
+        text = line.strip()
+        if not text.startswith("#"):
+            out.append(line if active else "")
+            continue
+        used = True
+        out.append("")
+        body = text.split("'")[0].strip()
+        const = re.match(r"#\s*const\s+(\w+)\s*=\s*(.+)$", body, re.I)
+        branch = re.match(r"#\s*(if|elseif)\b(.*?)(?:\bthen)?\s*$", body, re.I)
+        if const:
+            if active:
+                consts[const.group(1).lower()] = _cc_value(const.group(2), consts)
+        elif branch and branch.group(1).lower() == "if":
+            taken = active and _cc_value(branch.group(2), consts) != 0
+            stack.append([active, taken])
+            active = taken
+        elif not stack:
+            raise VBAParseError(f"{where}: line {number}: {text!r} without #If")
+        elif branch:
+            parent, taken = stack[-1]
+            active = parent and not taken and _cc_value(branch.group(2), consts) != 0
+            stack[-1][1] = taken or active
+        elif re.match(r"#\s*else\b", body, re.I):
+            parent, taken = stack[-1]
+            active = parent and not taken
+            stack[-1][1] = True
+        elif re.match(r"#\s*end\s+if\b", body, re.I):
+            active = stack.pop()[0]
+        else:
+            raise VBAParseError(f"{where}: line {number}: cannot read {text!r}")
+    if stack:
+        raise VBAParseError(f"{where}: #If without #End If")
+    return out, used
+
+
+_DECLARE = re.compile(
+    r'^\s*(?:(?:Public|Private)\s+)?Declare\s+(?:PtrSafe\s+)?(?:Sub|Function)\s+(\w+)\s+Lib\s+"([^"]*)"', re.I
+)
+_ENUM = re.compile(r"^\s*(?:(Public|Private)\s+)?Enum\s+(\w+)\s*(?:'.*)?$", re.I)
+_ENUM_MEMBER = re.compile(r"^\s*\[?(\w+)\]?\s*(?:=\s*([^']+?))?\s*(?:'.*)?$")
+_TYPE = re.compile(r"^\s*(?:(?:Public|Private)\s+)?Type\s+(\w+)\s*(?:'.*)?$", re.I)
+
+
+def module_declarations(module, lines):
+    """Read what the grammar leaves out of a module's declarations, and return their lines without it:
+    - Declare: the name of each procedure of another library (calling one is not modelled), its lines blanked
+    - Enum: each member becomes a constant, on its own line
+    - Type: its name, so a variable of that type can be refused by name"""
+    out = [text for _, text in lines]
+    i = 0
+    while i < len(out):
+        text = out[i]
+        end = i
+        while out[end].rstrip().endswith(" _") and end + 1 < len(out):
+            end += 1  # a statement carried over several lines
+        logical = " ".join(t.rstrip().removesuffix("_") for t in out[i : end + 1])
+        declare, enum, user_type = _DECLARE.match(logical), _ENUM.match(text), _TYPE.match(text)
+        if declare:
+            module.externals[declare.group(1).lower()] = (declare.group(1), declare.group(2))
+            out[i : end + 1] = [""] * (end + 1 - i)
+        elif enum:
+            scope, members, previous = enum.group(1) or "Public", [], None
+            out[i] = ""
+            i += 1
+            while i < len(out) and not re.match(r"^\s*End\s+Enum\b", out[i], re.I):
+                member = _ENUM_MEMBER.match(out[i])
+                if out[i].strip() and not out[i].lstrip().startswith(("'", "Rem ")) and member:
+                    name, value = member.group(1), member.group(2)
+                    value = value or (f"{previous} + 1" if previous else "0")
+                    out[i] = f"{scope} Const {name} = {value}"
+                    members.append(name)
+                    previous = name
+                else:
+                    out[i] = ""
+                i += 1
+            if i < len(out):
+                out[i] = ""
+            module.enums[enum.group(2).lower()] = members
+            end = i
+        elif user_type:
+            module.types[user_type.group(1).lower()] = user_type.group(1)
+        i = end + 1
+    return out
+
+
 def split_module(name, code, kind="standard"):
     """Cut a module into its declarations section and one text per procedure."""
     lines = code.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     module = n.Module(name=name, kind=kind, source=code)
+    lines, module.conditional = conditional_compilation(lines, name)
     decl_lines = []
     i = 0
     first_proc_seen = False
@@ -104,8 +252,12 @@ def split_module(name, code, kind="standard"):
         i += 1
     if decl_lines:
         first = decl_lines[0][0]
-        text = "\n".join(line for _, line in decl_lines)
-        stmts = Builder(text, first).parse_lines()
+        text = "\n".join(module_declarations(module, decl_lines))
+        try:
+            stmts = Builder(text, first).parse_lines()
+        except VBAParseError as err:  # told when one of the module's procedures is used: the others still run
+            module.decl_error = f"{name}: {err}"
+            stmts = []
         for s in stmts:
             if isinstance(s, n.Option):
                 module.options.append(s.text)
@@ -122,6 +274,8 @@ def split_module(name, code, kind="standard"):
 
 
 def parse_procedure(src: n.ProcSource) -> n.Procedure:
+    if src.kind.startswith("property"):
+        raise VBANotImplemented(f"{src.name}: Property procedures are not modelled")
     b = Builder(src.text, src.first_line)
     stmts = b.parse_lines()
     procs = [s for s in stmts if isinstance(s, n.Procedure)]
@@ -160,6 +314,39 @@ BIN_PREC = {
 UN_PREC = {"not": 6, "-": 13, "+": 13}
 
 
+# A date literal is handed to the grammar as a call: on its own, the grammar stops at the colon of #12:30:00 PM#.
+DATE_MARK = "MacroPressDateLiteral"
+_DATE_BODY = re.compile(
+    r"^\s*(?:\d{1,4}[/-]\d{1,2}[/-]\d{1,4})?\s*(?:\d{1,2}:\d{1,2}(?::\d{1,2})?\s*(?:[AaPp][Mm])?)?\s*$"
+)
+
+
+def mark_date_literals(line):
+    if "#" not in line or line.lstrip().lower().startswith("rem "):
+        return line
+    out, i = [], 0
+    while i < len(line):
+        ch = line[i]
+        if ch == '"':  # a string: to its closing quote ("" is a quote inside it)
+            j = i + 1
+            while j < len(line) and not (line[j] == '"' and line[j + 1 : j + 2] != '"'):
+                j += 2 if line[j] == '"' else 1
+            out.append(line[i : j + 1])
+            i = j + 1
+        elif ch == "'":  # a comment: the rest of the line
+            out.append(line[i:])
+            break
+        else:
+            j = line.find("#", i + 1) if ch == "#" else -1
+            if j > 0 and line[i + 1 : j].strip() and _DATE_BODY.match(line[i + 1 : j]):
+                out.append(f'{DATE_MARK}("{line[i + 1 : j].strip()}")')
+                i = j + 1
+            else:
+                out.append(ch)
+                i += 1
+    return "".join(out)
+
+
 class Builder:
     def __init__(self, text, first_line=1):
         self.first_line = first_line
@@ -168,7 +355,7 @@ class Builder:
             stripped = line.strip()
             if stripped.startswith("Attribute ") and "=" in stripped:
                 stripped = ""  # module/procedure attributes (VB_Name, VB_ProcData, ...)
-            prepared.append(stripped)
+            prepared.append(mark_date_literals(stripped))
         self.src = vbparser.makeSafeFromUnicode("\n".join(prepared) + "\n\n")
         self.newlines = [i for i, ch in enumerate(self.src) if ch == "\n"]
 
@@ -307,7 +494,8 @@ class Builder:
         )
 
     def formal_param(self, fp):
-        ident = fp.child("object") or fp.child("identifier")
+        obj = fp.child("object")  # the grammar reads "ParamArray xs()" as an object with an empty argument list
+        ident = obj.find("identifier") if obj is not None else fp.child("identifier")
         name = strip_marker(ident.text)
         sem = fp.child("passing_semantics")
         default = fp.child("default_value")
@@ -316,7 +504,8 @@ class Builder:
             byval=sem is not None and sem.text.strip().lower() == "byval",
             optional=fp.child("optional") is not None,
             default=self.expression(default.child("expression")) if default is not None else None,
-            is_array=fp.child("array_indicator") is not None,
+            is_array=fp.child("array_indicator") is not None
+            or (obj is not None and obj.child("parameter_list") is not None),
             type_name=self.type_of(fp.child("type_definition")),
             paramarray=fp.child("param_array") is not None,
         )
@@ -343,6 +532,8 @@ class Builder:
             return n.Erase([a.expr.name for a in args], line=line)
         if keyword == "stop" and not args:
             return n.Unsupported("stop_statement", "Stop", line=line)
+        if keyword == "error" and len(args) == 1 and args[0].name is None:  # Error 13 raises that error
+            return n.CallStmt(n.Member(n.Name("Err"), "Raise"), args, line=line)
         return n.CallStmt(target, args if args else None, line=line)
 
     def st_inline_implicit_call(self, node, line):
@@ -413,12 +604,16 @@ class Builder:
                         )
                     elif part.name == "size":
                         bounds.append((None, self.expression(part.child("expression"))))
+            name = strip_marker(ident.text)
+            marker = ident.text.strip()[len(name) :]
             out.append(
                 n.VarDecl(
-                    name=strip_marker(ident.text),
+                    name=name,
                     bounds=bounds,
                     dynamic=unsized is not None,
-                    type_name=self.type_of(type_def),
+                    type_name=self.type_of(type_def)
+                    if type_def is not None
+                    else TYPE_CHARACTERS.get(marker, "variant"),
                     is_new=type_def is not None and type_def.child("new_keyword") is not None,
                 )
             )
@@ -539,8 +734,16 @@ class Builder:
                 exprs = ce.children("expression")
                 if ce.child("to_keyword") is not None:
                     conds.append(n.CaseCond("range", self.expression(exprs[0]), self.expression(exprs[1])))
-                else:
-                    conds.append(n.CaseCond("eq", self.expression(exprs[0])))
+                    continue
+                e = self.expression(exprs[0])
+                # The grammar reads "Is > 5" as a comparison of a variable called Is with 5.
+                is_test = (
+                    isinstance(e, n.BinOp)
+                    and e.op in ("=", "<>", "<", ">", "<=", ">=")
+                    and isinstance(e.left, n.Name)
+                    and e.left.name.lower() == "is"
+                )
+                conds.append(n.CaseCond("is", e.right, op=e.op) if is_test else n.CaseCond("eq", e))
             cases.append((conds, self.block(item.child("case_body"))))
         else_block = node.child("case_else_block")
         else_body = self.block(else_block.child("case_body")) if else_block is not None else None
@@ -704,7 +907,7 @@ class Builder:
                     expr = n.Call(n.Name("Range"), [n.Arg(n.Literal(self.text(rng).strip()[1:-1]))])
                     continue
                 name = strip_marker(k.text.strip())
-                expr = n.Member(n.WithRef(), name) if with_ref else n.Name(name)
+                expr = n.Member(n.WithRef(), name) if with_ref else n.Name(name, k.text.strip()[len(name) :])
             elif k.name == "attribute":
                 expr = n.Member(expr, strip_marker(k.text.strip()))
             elif k.name == "parameter_list":
@@ -713,6 +916,8 @@ class Builder:
                 raise VBAParseError(f"line {self.line_of(k.start)}: unsupported [..] reference")
         if expr is None:
             raise VBAParseError(f"line {self.line_of(node.start)}: cannot read {self.text(node)!r}")
+        if isinstance(expr, n.Call) and isinstance(expr.func, n.Name) and expr.func.name == DATE_MARK:
+            return n.Literal(parse_date_literal(expr.args[0].expr.value))
         return expr
 
     def arg_list(self, bare):
@@ -753,18 +958,16 @@ class Builder:
         raise VBAParseError(f"unsupported literal {t!r}")
 
 
+TYPE_CHARACTERS = {"$": "string", "%": "integer", "&": "long", "!": "single", "#": "double", "@": "currency"}
+
+
 def strip_marker(name):
     return name.rstrip("$%#&!@")
 
 
 def parse_date_literal(t):
-    body = t.strip("#").strip()
-    for fmt in ("%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%I:%M:%S %p", "%H:%M:%S"):
-        try:
-            d = dt.datetime.strptime(body, fmt)
-            if fmt.startswith(("%I", "%H")):
-                d = dt.datetime(1899, 12, 30, d.hour, d.minute, d.second)
-            return d
-        except ValueError:
-            continue
-    raise VBAParseError(f"unsupported date literal {t!r}")
+    """A date literal's date: month first, as the VBA editor writes them (#1/31/2024 12:30:00 PM#)."""
+    d = parse_date_text(t.strip("#"))
+    if d is None:
+        raise VBAParseError(f"unsupported date literal {t!r}")
+    return d

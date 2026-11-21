@@ -12,11 +12,15 @@ In generated code:
 """
 
 import argparse
+import contextlib
 import datetime as _dt
+import os as _os
+import sys
+import time as _time
 
-from . import builtins as _builtins, snapshot as _snapshot
+from . import builtins as _builtins, snapshot as _snapshot, values as _values
 from .builtins import BUILTINS, VB_CONSTANTS, DebugObject, ErrObject
-from .errors import VBACompileError, VBAEnd, VBAError, VBANotImplemented, VBARuntimeError
+from .errors import VBACompileError, VBAEnd, VBAError, VBANotImplemented, VBARuntimeError, VBATimeout
 from .excel import XL_CONSTANTS, Application
 from .ledger import Ledger
 from .values import (
@@ -196,7 +200,7 @@ def _let_member(o, name, value):
 
 
 def member(obj, name, *args, **kwargs):
-    """obj.<name>(args) for member names that are Python keywords."""
+    """obj.<name>(args) for member names that Python keeps for itself, or that its own numbers and text answer to."""
     return wrap(member_value(raw(obj), name, [raw(a) for a in args], _kw(kwargs)))
 
 
@@ -211,6 +215,17 @@ def let(target, value):
     if not isinstance(o, VBAObject):
         raise VBARuntimeError(424, "Object required")
     o.vba_default_let(raw(value))
+
+
+def mid_statement(text, start, length, new):
+    """What Mid(text, start, length) = new leaves in the variable: `new` written over part of the text, as far as
+    the length asked for, the new text and the old one's end all allow."""
+    text, new, start = _builtins.to_str(val(text)), _builtins.to_str(val(new)), to_long(val(start))
+    if not 1 <= start <= len(text):
+        raise VBARuntimeError(5, "Invalid procedure call or argument")
+    room = len(text) - start + 1
+    count = min(len(new), room) if length is None else min(to_long(val(length)), len(new), room)
+    return text[: start - 1] + new[:count] + text[start - 1 + count :]
 
 
 def let_index(holder, key, value):
@@ -282,11 +297,14 @@ class _Scope:
 class Module(_Scope):
     """Variables declared at the top of a VBA module; they persist between macros."""
 
-    def __init__(self, name, decls=(), option_compare_text=False, option_explicit=False, kind="standard"):
+    def __init__(
+        self, name, decls=(), option_compare_text=False, option_explicit=False, kind="standard", option_base=0
+    ):
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_vars", {d[0].lower(): _new_var(d) for d in decls})
         object.__setattr__(self, "_text", option_compare_text)
         object.__setattr__(self, "_explicit", option_explicit)
+        object.__setattr__(self, "_base", option_base)  # where Array(...) starts: Option Base
         object.__setattr__(self, "_kind", kind)  # "document": a sheet's module
 
     def _find(self, key):
@@ -299,6 +317,7 @@ class Frame(_Scope):
     """The variables of one procedure call."""
 
     def __init__(self, ctx, module, proc, decls=(), params=(), args=(), kwargs=None, returns=None):
+        tick()
         object.__setattr__(self, "_ctx", ctx)
         object.__setattr__(self, "_module", module)
         object.__setattr__(self, "_proc", proc)
@@ -345,6 +364,29 @@ def ref(scope, name):
     return Ref(scope._find(name.lower()))
 
 
+class ItemVar:
+    """An element of an array passed ByRef: the procedure's parameter is that element."""
+
+    __slots__ = ("array", "index")
+
+    def __init__(self, array, index):
+        self.array, self.index = array, index
+
+    type_name = property(lambda self: self.array.elem_type)
+    value = property(lambda self: self.array.get(self.index), lambda self, x: self.array.set(self.index, x))
+
+    def let(self, value):
+        self.array.set(self.index, coerce(value, self.array.elem_type))
+
+
+def ref_item(holder, *index):
+    """a(i) as an argument: the element itself when a is an array, so a ByRef parameter changes it."""
+    x = raw(holder)
+    if isinstance(x, VBAArray):
+        return Ref(ItemVar(x, [to_long(val(i)) for i in index]))
+    return wrap(index_value(x, [raw(i) for i in index]))
+
+
 def _bind(frame, params, args, kwargs):
     for i, (name, byval, optional, default, type_name, paramarray) in enumerate(params):
         if paramarray:
@@ -369,6 +411,8 @@ def _bind(frame, params, args, kwargs):
                 continue
             a = a.var.value
         x = raw(a)
+        if isinstance(x, VBAArray):
+            x = x.copy()  # by value: the procedure gets its own array
         from .values import is_object_type
 
         if is_object_type(type_name) or (isinstance(x, VBAObject) and normalise_type(type_name) == "variant"):
@@ -388,7 +432,8 @@ def set_(scope, name, value):
 
 
 def result(frame, name):
-    return frame._vars[name.lower()].value
+    """What a Function returns: as a variable gives it, so GetSheet("Data").Range("A1") works on the result."""
+    return wrap(frame._vars[name.lower()].value)
 
 
 def redim(frame, name, bounds, preserve=False, type_name="variant"):
@@ -413,41 +458,41 @@ def erase(frame, name):
 # ---------------------------------------------------------------------------
 
 
-def _note_num_text():
-    _CTX.ledger.note("CMP-NUMBER-TEXT")
+# Comparisons. k says how the two sides are declared, which decides how a number is compared with a string:
+# "n" a numeric type, "s" a String, "v" a Variant (see values.compare).
 
 
-def _cmp(a, b, text):
-    return compare(val(a), val(b), text, _note_num_text)
+def _cmp(a, b, text, k):
+    return compare(val(a), val(b), text, k)
 
 
-def eq(a, b, text=False):
-    c = _cmp(a, b, text)
+def eq(a, b, text=False, k="vv"):
+    c = _cmp(a, b, text, k)
     return NULL if c is NULL else c == 0
 
 
-def ne(a, b, text=False):
-    c = _cmp(a, b, text)
+def ne(a, b, text=False, k="vv"):
+    c = _cmp(a, b, text, k)
     return NULL if c is NULL else c != 0
 
 
-def lt(a, b, text=False):
-    c = _cmp(a, b, text)
+def lt(a, b, text=False, k="vv"):
+    c = _cmp(a, b, text, k)
     return NULL if c is NULL else c < 0
 
 
-def gt(a, b, text=False):
-    c = _cmp(a, b, text)
+def gt(a, b, text=False, k="vv"):
+    c = _cmp(a, b, text, k)
     return NULL if c is NULL else c > 0
 
 
-def le(a, b, text=False):
-    c = _cmp(a, b, text)
+def le(a, b, text=False, k="vv"):
+    c = _cmp(a, b, text, k)
     return NULL if c is NULL else c <= 0
 
 
-def ge(a, b, text=False):
-    c = _cmp(a, b, text)
+def ge(a, b, text=False, k="vv"):
+    c = _cmp(a, b, text, k)
     return NULL if c is NULL else c >= 0
 
 
@@ -523,6 +568,7 @@ def imp(a, b):
 
 def cond(x):
     """The test of If / While / Do: VBA rules, Null counts as False."""
+    tick()
     return condition_true(val(x))
 
 
@@ -531,6 +577,7 @@ def num(x):
 
 
 def for_test(counter, end, step):
+    tick()
     c = to_number(val(counter))
     return c <= end if step >= 0 else c >= end
 
@@ -545,18 +592,20 @@ def each(collection):
 
 
 def assign_each(scope, name, item):
+    tick()
     if isinstance(raw(item), VBAObject):
         set_(scope, name, item)
     else:
         scope[name] = item
 
 
-def case_eq(subject, x, text=False):
-    return _cmp(subject, x, text) == 0
+def case_eq(subject, x, text=False, k="vv"):
+    return _cmp(subject, x, text, k) == 0
 
 
-def case_range(subject, lo, hi, text=False):
-    return _cmp(subject, lo, text) >= 0 and _cmp(subject, hi, text) <= 0
+def case_range(subject, lo, hi, text=False, k="vvv"):
+    """Case lo To hi; k is how the subject, lo and hi are declared."""
+    return _cmp(subject, lo, text, k[0] + k[1]) >= 0 and _cmp(subject, hi, text, k[0] + k[2]) <= 0
 
 
 # ---------------------------------------------------------------------------
@@ -568,8 +617,27 @@ def on_error():
     _CTX.err.clear()
 
 
+CAUGHT = (VBARuntimeError, AttributeError)  # what On Error can handle: see vba_error
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+
+
+def vba_error(err):
+    """The VBA error a failure in converted code stands for. A member asked there of a number or of text (x.Value,
+    x holding 5) is Python's AttributeError and VBA's error 424. One raised inside this package is a fault of the
+    converter, not of the macro, and is passed on as it is."""
+    if isinstance(err, VBARuntimeError):
+        return err
+    tb = err.__traceback__
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    if _os.path.abspath(tb.tb_frame.f_code.co_filename).startswith(_HERE + _os.sep):
+        raise err
+    return VBARuntimeError(424, "Object required")
+
+
 def skipped(err, line):
     """A statement failed under On Error Resume Next: record it and carry on."""
+    err = vba_error(err)
     _CTX.err.set(err.number, err.description)
     _CTX.ledger.note("ON-ERROR-RESUME-NEXT", f"line {line}: {err.description}")
 
@@ -578,7 +646,7 @@ def cond_rn(fn, on_error_value, line):
     """A condition under On Error Resume Next: if it fails, VBA runs the next statement."""
     try:
         return cond(fn())
-    except VBARuntimeError as err:
+    except CAUGHT as err:
         skipped(err, line)
         return on_error_value
 
@@ -586,7 +654,7 @@ def cond_rn(fn, on_error_value, line):
 def try_value(fn, default, line):
     try:
         return fn()
-    except VBARuntimeError as err:
+    except CAUGHT as err:
         skipped(err, line)
         return default
 
@@ -595,7 +663,8 @@ def header(fn, line):
     """A loop or Select header under On Error Resume Next: a failure is not modelled."""
     try:
         return fn()
-    except VBARuntimeError as err:
+    except CAUGHT as err:
+        err = vba_error(err)
         raise VBANotImplemented(
             f"line {line}: a loop or Select header failed under On Error Resume Next "
             f"({err.description}); VBA's behaviour here is not modelled"
@@ -610,6 +679,7 @@ def not_modelled(text):
 
 
 def jump(w, depth, target):
+    tick()
     d = depth[target] if target < len(depth) else 0
     if d > len(w):
         raise VBANotImplemented("jumping into a With block")
@@ -624,6 +694,7 @@ def set_on_error(frame, mode, label_pc=None):
 
 
 def handle_error(frame, err, pc, w, depth, kind):
+    err = vba_error(err)
     mode = frame._on_error
     if mode is None or (frame._in_handler and mode[0] != "resume_next"):
         raise err
@@ -678,6 +749,7 @@ def for_next(scope, name, state, key):
 
 
 def each_next(scope, name, state, key):
+    tick()
     items, i = state[key]
     if i >= len(items):
         return False
@@ -746,14 +818,62 @@ class Clock:
         self.elapsed = max(self.elapsed, (when - self.start).total_seconds())
 
 
+_TICKS = 0
+
+
+def tick():
+    """Called where a macro can loop: stops a run that has passed its time limit."""
+    global _TICKS
+    _TICKS += 1
+    if not _TICKS & 255 and _CTX.deadline is not None and _time.monotonic() > _CTX.deadline:
+        raise VBATimeout(f"the run passed its time limit of {_CTX.timeout:g} seconds")
+
+
+@contextlib.contextmanager
+def deep_calls():
+    """While macros run: room for procedures that call themselves a few thousand deep, as VBA allows."""
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limit, 12000))
+    try:
+        yield
+    finally:
+        sys.setrecursionlimit(limit)
+
+
+def run_macro(fn, ctx):
+    """Run one converted macro. Returns its outcome as (status, message): what stops it is told, never raised."""
+    try:
+        with deep_calls():
+            fn(ctx)
+    except VBAEnd:
+        pass
+    except CAUGHT as err:
+        try:
+            return "stopped by a VBA error", str(vba_error(err))
+        except AttributeError:  # raised inside the converter
+            return "stopped: converter error", f"{type(err).__name__}: {err}"
+    except RecursionError:
+        return "stopped by a VBA error", "run-time error 28: Out of stack space"
+    except VBATimeout as err:
+        return "stopped: time limit", str(err)
+    except VBAError as err:
+        return "stopped: not modelled", str(err)
+    except Exception as err:  # noqa: BLE001 - a fault in the converter stops this macro, not the run
+        return "stopped: converter error", f"{type(err).__name__}: {err}"
+    return "completed", ""
+
+
 class Context:
     """One Excel session on one workbook: `xl` in generated code."""
 
-    def __init__(self, workbook_path=None, book=None, now=None, answers=(), environ=None):
+    def __init__(self, workbook_path=None, book=None, now=None, answers=(), environ=None, timeout=None):
         global _CTX
         self.path = workbook_path
         self.book = book if book is not None else read_workbook(workbook_path)
         self.ledger = Ledger()
+        _values.set_note(self.ledger.note)
+        self.timeout = timeout  # seconds the macros may run in all, or None
+        self.deadline = None if timeout is None else _time.monotonic() + timeout
         self.now = now or _dt.datetime.now().replace(microsecond=0)
         self.clock = Clock(self.now)
         self.app = Application(self.book, self.ledger, self.clock)
@@ -818,19 +938,10 @@ def main(buttons, macros, description="", argv=None):
         table = buttons if kind == "button" else macros
         if name not in table:
             ap.error(f"unknown {kind} {name!r}; choose from: " + ", ".join(repr(k) for k in table))
-        try:
-            table[name](ctx)
-            outcome = "completed"
-        except VBAEnd:
-            outcome = "completed (End)"
-        except VBARuntimeError as err:
-            outcome = f"stopped by a VBA error: {err}"
+        outcome, message = run_macro(table[name], ctx)
+        print(f"[{i}] {kind} {name!r}: {outcome}" + (f": {message}" if message else ""))
+        if outcome != "completed":
             status = 1
-        except VBAError as err:
-            outcome = f"stopped: {type(err).__name__}: {err}"
-            status = 1
-        print(f"[{i}] {kind} {name!r}: {outcome}")
-        if status:
             break
     ctx.save(args.output)
     print(f"saved {args.output}")

@@ -120,7 +120,7 @@ $ macropress press examples/invoice/invoice.xlsm \
     }
   ],
   "unverified_behaviours": [
-    "- `ROUND-DECIMAL` [unverified] x5: Round() rounds halves to even on the decimal form of the number.",
+    "- `FORMULAS-RECALCULATED` [unverified] x8: Formulas whose inputs changed are recalculated before their values are read ...",
     ...
   ],
   "messages": ["InputBox: Discount on every unit price, in percent:", "MsgBox: Lower every unit price by 10%?"]

@@ -19,17 +19,30 @@ import math
 import re
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
-from .errors import VBANotImplemented, VBARuntimeError
+from .errors import VBANotImplemented, VBAObjectError, VBARuntimeError
 
 
 class _Special:
     __slots__ = ("name",)
 
     def __init__(self, name):
-        self.name = name
+        object.__setattr__(self, "name", name)
 
     def __repr__(self):
         return self.name
+
+    def _no_object(self):
+        if self.name == "Nothing":
+            return VBAObjectError(91, "Object variable or With block variable not set")
+        return VBAObjectError(424, "Object required")
+
+    def __getattr__(self, member):  # x.Value where x holds no object: VBA's error, which On Error can handle
+        if member.startswith("__"):
+            raise AttributeError(member)
+        raise self._no_object()
+
+    def __setattr__(self, member, value):
+        raise self._no_object()
 
 
 EMPTY = _Special("Empty")
@@ -37,6 +50,18 @@ NULL = _Special("Null")
 NOTHING = _Special("Nothing")
 
 EPOCH = dt.datetime(1899, 12, 30)
+
+_note = None  # set by the running session: _note(key, detail) records a behaviour the model relied on
+
+
+def set_note(fn):
+    global _note
+    _note = fn
+
+
+def note(key, detail=None):
+    if _note is not None:
+        _note(key, detail)
 
 
 class XLError(str):
@@ -312,12 +337,10 @@ def coerce(value, type_name):
         return bankers_int(to_number(value))
     if t in ("single", "double"):
         return float(to_number(value))
-    if t in ("currency", "decimal"):
-        return (
-            to_decimal(value).quantize(Decimal("0.0001"), rounding=ROUND_HALF_EVEN)
-            if t == "currency"
-            else to_decimal(value)
-        )
+    if t == "currency":
+        return to_currency(value)
+    if t == "decimal":
+        return to_decimal(value)
     raise VBANotImplemented(f"variables of type {type_name}")
 
 
@@ -331,28 +354,58 @@ def _int_range(n, lo, hi):
 # Conversions
 # ---------------------------------------------------------------------------
 
-_NUM_TEXT = re.compile(r"^\s*([-+]?)\s*(\d[\d,]*\.?\d*|\.\d+)([eEdD][-+]?\d+)?\s*$")
-_HEX_TEXT = re.compile(r"^\s*&[hH]([0-9a-fA-F]+)&?\s*$")
+_NUMBER = r"(\d[\d,]*\.?\d*|\.\d+)([eEdD][-+]?\d+)?"
+# A number, with its sign in front ("- 5"), behind ("5-") or as parentheses ("(5)").
+_NUM_TEXT = re.compile(rf"^\s*(?:([-+]?)\s*{_NUMBER}|{_NUMBER}\s*(-)|(\()\s*{_NUMBER}\s*\))\s*$")
+_HEX_TEXT = re.compile(r"^\s*&([hH][0-9a-fA-F]+|[oO][0-7]+)&?\s*$")
 
 
 def parse_number_text(s):
-    """VBA's string-to-number conversion (assumes '.' decimal and ',' thousands separators)."""
+    """VBA's string-to-number conversion (assumes '.' decimal and ',' thousands separators): the number, a Double, or
+    None. A currency sign is not modelled: VBA reads the one of the machine's regional settings, and no other."""
     m = _NUM_TEXT.match(s)
     if m:
-        sign, body, exp = m.groups()
-        body = body.replace(",", "")
-        text = sign + body + (exp.replace("d", "e").replace("D", "e") if exp else "")
+        sign, body, exp, body2, exp2, minus, paren, body3, exp3 = m.groups()
+        body, exp = body or body2 or body3, exp or exp2 or exp3
+        negative = sign == "-" or bool(minus) or bool(paren)
+        text = body.replace(",", "") + (exp.replace("d", "e").replace("D", "e") if exp else "")
         try:
             value = float(text)
         except ValueError:
             return None
-        return value
+        if not math.isfinite(value):
+            return None
+        return -value if negative else value
     m = _HEX_TEXT.match(s)
     if m:
-        return int(m.group(1), 16)
-    if s.strip().lower() in ("true", "false"):
-        return None
+        digits = m.group(1)
+        return float(int(digits[1:], 16 if digits[0] in "hH" else 8))
+    if s.count("$") == 1 and _NUM_TEXT.match(s.replace("$", " ")):
+        raise VBANotImplemented(
+            f"reading {s!r} as a number: whether VBA takes a currency sign depends on the machine's regional settings"
+        )
     return None
+
+
+def typed_number(text):
+    """A number as Excel reads it from digits typed in a cell or written in a formula: its first 15 significant
+    digits, the rest dropped (1234567890123456789 is 1234567890123450000). None when it is too large for a number:
+    the largest that can be typed is 9.99999999999999E+307."""
+    try:
+        sign, digits, exponent = Decimal(text).as_tuple()
+    except InvalidOperation:
+        return None
+    digits = list(digits)
+    while len(digits) > 1 and digits[0] == 0:
+        digits.pop(0)
+    if len(digits) > 15:
+        exponent += len(digits) - 15
+        digits = digits[:15]
+    try:
+        value = float(Decimal((sign, tuple(digits), exponent)))
+    except (OverflowError, InvalidOperation):
+        return None
+    return value if abs(value) < 1e308 else None
 
 
 def to_number(v):
@@ -370,11 +423,7 @@ def to_number(v):
         raise type_mismatch()
     if isinstance(v, str):
         n = parse_number_text(v)
-        if n is None:
-            if v.strip().lower() == "true":
-                return -1
-            if v.strip().lower() == "false":
-                return 0
+        if n is None:  # "True" is no number either: CDbl("True") is a type mismatch, though CBool("True") is True
             raise type_mismatch()
         return n
     if v is NULL:
@@ -410,6 +459,36 @@ def hex_value(n, long=False):
 
 def to_double(v):
     return float(to_number(v))
+
+
+CURRENCY_MAX = Decimal("922337203685477.5807")
+
+
+def _currency(exact):
+    """An exact value as a Currency: four decimals, a half going to the even digit; error 6 past its range."""
+    try:
+        value = exact.quantize(Decimal("0.0001"), rounding=ROUND_HALF_EVEN)
+    except InvalidOperation:  # far too many digits to hold
+        raise VBARuntimeError(6, "Overflow") from None
+    if abs(value) > CURRENCY_MAX:
+        raise VBARuntimeError(6, "Overflow")
+    return value
+
+
+def to_currency(v):
+    """A Currency: the number, as the Double holds it, rounded to four decimals."""
+    n = to_number(v)
+    return _currency(n if isinstance(n, Decimal) else Decimal(n))
+
+
+def is_currency(v):
+    """A Currency value: a Decimal that CDec did not make."""
+    return isinstance(v, Decimal) and not isinstance(v, CDecValue)
+
+
+def like_decimal(original, result):
+    """The result of an operation on one Decimal, as the kind the original was: CDec's stays CDec's."""
+    return CDecValue(result) if isinstance(original, CDecValue) else result
 
 
 def to_decimal(v):
@@ -461,7 +540,92 @@ def date_to_serial(d):
 
 
 def serial_to_date(x):
-    return EPOCH + dt.timedelta(days=float(x))
+    x = float(x)
+    if not -657434 <= x < 2958466:  # 1 January 100 to 31 December 9999
+        raise VBARuntimeError(6, "Overflow")
+    return EPOCH + dt.timedelta(days=x)
+
+
+MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
+    "december",
+)  # fmt: skip
+_TIME_TEXT = re.compile(r"^(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*([AaPp][Mm])?$")
+_TIME_AT_END = re.compile(r"(?:\d{1,2}:\d{1,2}(?::\d{1,2})?\s*(?:[AaPp][Mm])?|\d{1,2}\s*[AaPp][Mm])\s*$")
+
+
+def two_digit_year(year):
+    """The year VBA and Excel read in a year of two digits: 0 to 29 are 2000 to 2029, 30 to 99 are 1930 to 1999."""
+    return year + (2000 if year < 30 else 1900) if 0 <= year <= 99 else year
+
+
+def _time_of(text):
+    m = _TIME_TEXT.match(text.strip())
+    if m is None or (m.group(2) is None and m.group(4) is None):
+        return None
+    hour, minute, second, half = int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0), (m.group(4) or "").lower()
+    if half:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if half == "pm" else 0)
+    return (hour, minute, second) if hour < 24 and minute < 60 and second < 60 else None
+
+
+def _date_of(text):
+    """(year, month, day) of a date's text, None when it is not one. A day and month in digits are read month first,
+    as US regional settings read them (VBA reads them as the machine's settings say), unless only the other order
+    is a date: 13/5/2024 is 13 May."""
+    if re.sub(r"\d+|[A-Za-z]+\.?|[\s,/\-]", "", text):
+        return None
+    tokens = re.findall(r"\d+|[A-Za-z]+", text)
+    words, numbers = [t for t in tokens if t[0].isalpha()], [t for t in tokens if t[0].isdigit()]
+    if len(words) > 1 or not numbers:
+        return None
+    if words:  # 5 Jan 2024, Jan 5, 2024, 5-Jan-24, January 2024
+        word = words[0].lower()
+        month = next((i for i, m in enumerate(MONTH_NAMES, 1) if word == m or word == m[:3]), None)
+        if month is None:
+            return None
+        if len(numbers) == 2:
+            first, second = numbers
+            day, year = (second, first) if len(first) == 4 else (first, second)
+            return two_digit_year(int(year)) if len(year) <= 2 else int(year), month, int(day)
+        if len(numbers) == 1 and (len(numbers[0]) == 4 or int(numbers[0]) > 31):
+            return int(numbers[0]), month, 1
+        raise VBANotImplemented(f"the date {text.strip()!r}: it has no year, and VBA takes the current one")
+    if len(numbers) == 3:
+        a, b, c = numbers
+        if len(a) == 4 or int(a) > 31:  # 2024-01-05
+            return int(a), int(b), int(c)
+        month, day = int(a), int(b)
+        if month > 12 >= day:
+            month, day = day, month
+        elif day <= 12 and month != day:
+            note("DATE-TEXT-ORDER", text.strip())
+        return two_digit_year(int(c)) if len(c) <= 2 else int(c), month, day
+    if len(numbers) == 2:
+        raise VBANotImplemented(f"the date {text.strip()!r}: it has no year, and VBA takes the current one")
+    return None
+
+
+def parse_date_text(text):
+    """The date and time a text holds, as VBA reads it with US regional settings; None when it holds neither."""
+    text = text.strip()
+    time_match = _TIME_AT_END.search(text)
+    time_text = time_match.group(0) if time_match else ""
+    date_text = text[: time_match.start()].strip() if time_match else text
+    time = _time_of(time_text) if time_text else (0, 0, 0)
+    if time is None or not (date_text or time_text):
+        return None
+    if not date_text:
+        return EPOCH.replace(hour=time[0], minute=time[1], second=time[2])
+    date = _date_of(date_text)
+    if date is None:
+        return None
+    try:
+        return dt.datetime(*date, *time)
+    except ValueError:
+        return None
 
 
 def to_date(v):
@@ -475,23 +639,13 @@ def to_date(v):
     if isinstance(v, str):
         n = parse_number_text(v)
         if n is not None:
-            return serial_to_date(n)
-        for fmt in (
-            "%m/%d/%Y %H:%M:%S",
-            "%m/%d/%Y %H:%M",
-            "%m/%d/%Y",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d",
-            "%H:%M:%S",
-            "%H:%M",
-        ):
             try:
-                d = dt.datetime.strptime(v.strip(), fmt)
-                if fmt.startswith("%H"):
-                    d = EPOCH.replace(hour=d.hour, minute=d.minute, second=d.second)
-                return d
-            except ValueError:
-                pass
+                return serial_to_date(n)
+            except VBARuntimeError:
+                raise type_mismatch() from None
+        d = parse_date_text(v)
+        if d is not None:
+            return d
     raise type_mismatch()
 
 
@@ -514,9 +668,11 @@ def format_double(x):
 
 
 def format_date(d):
-    """CStr of a Date in the US short format (VBA uses the machine's locale)."""
-    has_time = (d.hour, d.minute, d.second) != (0, 0, 0)
+    """CStr of a Date in the US short format (VBA uses the machine's regional settings): the date, the time, or both.
+    A time on its own is one with no date (day 0)."""
+    note("DATE-TEXT-US")
     has_date = d.date() != EPOCH.date()
+    has_time = (d.hour, d.minute, d.second) != (0, 0, 0) or not has_date
     date_part = f"{d.month}/{d.day}/{d.year}"
     hour12 = d.hour % 12 or 12
     time_part = f"{hour12}:{d.minute:02d}:{d.second:02d} {'AM' if d.hour < 12 else 'PM'}"
@@ -583,9 +739,8 @@ def op_add(a, b):
     if isinstance(b, str) and a is EMPTY:
         return b
     if _date_kind(a) or _date_kind(b):
-        return serial_to_date(to_number(a) + to_number(b))
-    x, y = _num_pair(a, b)
-    return _mix(x, y, x + y if not _mixed_decimal(x, y) else Decimal(str(x)) + Decimal(str(y)))
+        return serial_to_date(float(to_number(a)) + float(to_number(b)))
+    return _sum(*_num_pair(a, b), 1)
 
 
 def op_sub(a, b):
@@ -595,29 +750,35 @@ def op_sub(a, b):
     if _date_kind(a) and _date_kind(b):
         return date_to_serial(a) - date_to_serial(b)
     if _date_kind(a):
-        return serial_to_date(date_to_serial(a) - to_number(b))
-    x, y = _num_pair(a, b)
-    return _mix(x, y, x - y if not _mixed_decimal(x, y) else Decimal(str(x)) - Decimal(str(y)))
+        return serial_to_date(date_to_serial(a) - float(to_number(b)))
+    return _sum(*_num_pair(a, b), -1)
+
+
+def _sum(x, y, sign):
+    """x + y, or x - y for sign -1. A Currency with any other number gives a Currency: the other is made one first
+    (to four decimals), so CCur(1.5) + 1.00005 is 2.5001."""
+    if isinstance(x, CDecValue) or isinstance(y, CDecValue):
+        return CDecValue(to_decimal(x) + sign * to_decimal(y))
+    if isinstance(x, Decimal) or isinstance(y, Decimal):
+        return _currency(to_currency(x) + sign * to_currency(y))
+    if isinstance(x, int) and isinstance(y, int):
+        return x + sign * y
+    return _finite(float(x) + sign * float(y))
 
 
 def op_mul(a, b):
+    """A Currency times a whole number or another Currency is a Currency; times a Double it is a Double."""
     a, b = default_value(a), default_value(b)
     if a is NULL or b is NULL:
         return NULL
     x, y = _num_pair(a, b)
-    return _mix(x, y, x * y if not _mixed_decimal(x, y) else Decimal(str(x)) * Decimal(str(y)))
-
-
-def _mixed_decimal(x, y):
-    return isinstance(x, Decimal) != isinstance(y, Decimal) and (isinstance(x, Decimal) or isinstance(y, Decimal))
-
-
-def _mix(x, y, result):
-    if isinstance(x, Decimal) or isinstance(y, Decimal):
-        return result if isinstance(result, Decimal) else Decimal(str(result))
+    if isinstance(x, CDecValue) or isinstance(y, CDecValue):
+        return CDecValue(to_decimal(x) * to_decimal(y))
     if isinstance(x, int) and isinstance(y, int):
-        return int(result)
-    return _finite(float(result))
+        return x * y
+    if not isinstance(x, float) and not isinstance(y, float):
+        return _currency(x * y)
+    return _finite(float(x) * float(y))
 
 
 def _finite(x):
@@ -636,9 +797,9 @@ def op_div(a, b):
         if x == 0:
             raise VBARuntimeError(6, "Overflow")
         raise VBARuntimeError(11, "Division by zero")
-    if isinstance(x, Decimal) or isinstance(y, Decimal):
-        return to_decimal(x) / to_decimal(y)
-    return _finite(float(x) / float(y))
+    if isinstance(x, CDecValue) or isinstance(y, CDecValue):
+        return CDecValue(to_decimal(x) / to_decimal(y))
+    return _finite(float(x) / float(y))  # a Currency divided, or divided by, gives a Double
 
 
 def op_intdiv(a, b):
@@ -693,7 +854,7 @@ def op_neg(a):
     if _date_kind(a):
         return serial_to_date(-date_to_serial(a))
     n = to_number(a)
-    return -n
+    return like_decimal(n, -n)
 
 
 def _logical_operands(a, b):
@@ -758,11 +919,15 @@ def op_imp(a, b):
     return _logical(a, b, lambda x, y: (not x) or y, lambda x, y: (~x) | y)
 
 
-def compare(a, b, text_compare=False, on_num_vs_text=None):
-    """Three-way Variant comparison: -1, 0, 1, or NULL.
+def compare(a, b, text_compare=False, kinds="vv"):
+    """Three-way comparison: -1, 0, 1, or NULL.
 
-    on_num_vs_text is called when a number meets a non-numeric string (recorded as an
-    assumption: VBA treats the number as smaller, without an error).
+    When a number meets a string, VBA goes by how each side is declared, which `kinds` gives for the two sides:
+    "n" a numeric type, "s" a String, "v" a Variant.
+      Variant and Variant     the number is smaller, whatever the string holds
+      Variant and a String    both are compared as text
+      a number and a Variant  as numbers if the Variant's text is a number, else the number is smaller
+      a number and a String   as numbers; error 13 if the text is not a number
     """
     a, b = default_value(a), default_value(b)
     if a is NULL or b is NULL:
@@ -782,17 +947,25 @@ def compare(a, b, text_compare=False, on_num_vs_text=None):
     b_num = not isinstance(b, str)
     if a_num and b_num:
         x, y = to_number(a), to_number(b)
-        if isinstance(x, Decimal) or isinstance(y, Decimal):
+        if isinstance(x, CDecValue) or isinstance(y, CDecValue):
             x, y = to_decimal(x), to_decimal(y)
+        elif isinstance(x, Decimal) or isinstance(y, Decimal):
+            x, y = to_currency(x), to_currency(y)  # a Currency against a Double: the Double to four decimals
         return (x > y) - (x < y)
-    # number against string
-    s = b if a_num else a
-    n = parse_number_text(s)
-    if n is not None:
-        x, y = (to_number(a), n) if a_num else (n, to_number(b))
+    # a number against a string
+    text_kind, number_kind = (kinds[1], kinds[0]) if a_num else (kinds[0], kinds[1])
+    if text_kind == "s" and number_kind != "n":
+        x, y = (to_str(a), b) if a_num else (a, to_str(b))
+        if text_compare:
+            x, y = x.casefold(), y.casefold()
         return (x > y) - (x < y)
-    if on_num_vs_text:
-        on_num_vs_text()
+    if number_kind == "n":
+        n = parse_number_text(b if a_num else a)
+        if n is not None:
+            x, y = (to_number(a), n) if a_num else (n, to_number(b))
+            return (x > y) - (x < y)
+        if text_kind == "s":
+            raise type_mismatch()
     return -1 if a_num else 1
 
 
@@ -827,16 +1000,24 @@ def like(text, pattern, text_compare=False):
 
 
 def vba_round(x, digits=0):
-    """VBA Round(): halves to even, on the decimal form of the number."""
+    """VBA Round(): the number times 10^digits, as a Double, rounded to a whole number with halves to even.
+    So Round(2.5) is 2, Round(2.675, 2) is 2.68 (267.5 exactly) and Round(1.015, 2) is 1.01 (101.49999999999999)."""
     n = to_number(x)
-    d = to_decimal(n)
-    q = Decimal(1).scaleb(-int(digits))
-    r = d.quantize(q, rounding=ROUND_HALF_EVEN)
-    if isinstance(n, int) and digits >= 0:
-        return int(r)
+    digits = int(digits)
+    if digits < 0:
+        raise VBARuntimeError(5, "Invalid procedure call or argument")
+    if isinstance(n, int):
+        return n
     if isinstance(n, Decimal):
-        return r
-    return float(r)
+        return like_decimal(n, n.quantize(Decimal(1).scaleb(-digits), rounding=ROUND_HALF_EVEN))
+    scaled = n * 10**digits
+    if not math.isfinite(scaled):
+        return n
+    return round(scaled) / 10**digits
+
+
+class CDecValue(Decimal):
+    """What CDec gives: a Variant of subtype Decimal. Any other Decimal here is a Currency."""
 
 
 def type_name(v):
@@ -856,7 +1037,7 @@ def type_name(v):
     if isinstance(v_, float):
         return "Double"
     if isinstance(v_, Decimal):
-        return "Decimal"
+        return "Decimal" if isinstance(v_, CDecValue) else "Currency"
     if isinstance(v_, dt.datetime):
         return "Date"
     if isinstance(v_, XLError):

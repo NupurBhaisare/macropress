@@ -17,6 +17,11 @@ class VBARuntimeError(VBAError):
         self.description = description
 
 
+class VBAObjectError(VBARuntimeError, AttributeError):
+    """Run-time error 91 or 424: a member used on a value that holds no object (x.Value where x is Nothing or
+    Empty). Python meets it as a missing attribute, so it is an AttributeError too."""
+
+
 class VBACompileError(VBAError):
     """VBA would refuse to compile this code. Never trapped by On Error."""
 
@@ -31,6 +36,10 @@ class VBANotImplemented(VBAError):
     Never trapped by On Error: a gap in the converter must stop the run instead of
     being skipped silently.
     """
+
+
+class VBATimeout(VBAError):
+    """The run passed the time it was given. Never trapped by On Error."""
 
 
 class VBAEnd(Exception):

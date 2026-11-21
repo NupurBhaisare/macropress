@@ -38,6 +38,15 @@ class Runner:
         out, _, _ = self.run_vba("Sub Test()\n" + body + "\nEnd Sub\n", **kw)
         return out
 
+    def outcome(self, code, **context):
+        """How a run of Test ends when nothing in the macro handles what stops it: (status, message)."""
+        source = codegen.convert(
+            build_project([("Module1", code)]), "test", [(None, "Test")], force_flat=(self.MODE == "steps")
+        )
+        namespace = {}
+        exec(compile(source, "<generated>", "exec"), namespace)
+        return runtime.run_macro(namespace["Test"], runtime.Context(book=Book.blank(), now=NOW, **context))
+
 
 class ControlFlow(Runner):
     def test_for_counter_after_loop_is_end_plus_step(self):
@@ -59,6 +68,34 @@ class ControlFlow(Runner):
     def test_backward_goto(self):
         body = "i = 0\nagain:\ni = i + 1\nIf i < 3 Then GoTo again\nDebug.Print i"
         self.assertEqual(self.prints(body), ["3"])
+
+    def test_statements_and_declarations_beyond_the_everyday_ones(self):
+        code = (
+            "Enum Shade\nShRed = 1\nShGreen\nShBlue = 10\nShPurple\nEnd Enum\n"
+            '#If VBA7 Then\nPrivate Declare PtrSafe Function GetTickCount Lib "kernel32" () As Long\n#Else\n'
+            'Private Declare Function GetTickCount Lib "kernel32" () As Long\n#End If\n'
+            "Function Total(ParamArray xs())\nFor i = LBound(xs) To UBound(xs)\nTotal = Total + xs(i)\nNext\nEnd Function\n"
+            'Function Opt(Optional a, Optional b = 5)\nOpt = IIf(IsMissing(a), "missing", "given") & b\nEnd Function\n'
+            "Sub Inc(x)\nx = x + 1\nEnd Sub\n"
+            "Sub Test()\n"
+            'x = 7\nSelect Case x\nCase Is > 5\ns = "big"\nCase Else\ns = "else"\nEnd Select\n'
+            "Dim c As Shade\nc = ShGreen\nDebug.Print s, c, Shade.ShPurple\n"
+            't = "abcdef"\nMid(t, 2, 1) = "X"\nMid(t, 5) = "WXYZ"\nDebug.Print t\n'
+            "Dim q(1 To 2)\nq(1) = 1\nInc q(1)\n"
+            'Debug.Print Total(1, 2, 3), Opt(, 7), Opt(b:=9), Split("a,b", ",")(1), Switch(False, 1, True, "two"), q(1)\n'
+            "Debug.Print #1/5/2024# + 1 = DateSerial(2024, 1, 6), IsNull(Choose(5, 1)), vbObjectError + 1\n"
+            "On Error Resume Next\nError 13\nDebug.Print Err.Number\n"
+            "End Sub\n"
+        )
+        # Case Is, an Enum that counts on, #If read as 64-bit Windows, a Mid statement, a ParamArray, an argument left
+        # out, what a call gave indexed, a date literal, the Error statement: each as Excel runs it
+        self.assertEqual(
+            self.run_vba(code)[0],
+            ["big 2 11", "aXcdWX", "6 missing7 missing9 b two 2", "True True -2147221503", "13"],
+        )
+        for unknown in ("x = GetTickCount()", "x = vbNoSuchConstant", "x = xlNoSuchConstant + 1"):
+            with self.assertRaises(VBANotImplemented):  # a Declare'd function; a constant this does not know
+                self.run_vba(code.replace("x = 7", unknown))
 
     def test_stop_is_reported_not_skipped(self):
         with self.assertRaises(VBANotImplemented):
@@ -127,6 +164,26 @@ class ErrorHandling(Runner):
 
 
 class Values(Runner):
+    def test_a_member_of_what_is_no_object_is_error_424_and_of_nothing_error_91(self):
+        body = (
+            "On Error Resume Next\nx = 5\ny = x.Value\nDebug.Print Err.Number\nErr.Clear\n"
+            's = "abc"\ny = s.count("a")\nDebug.Print Err.Number\nErr.Clear\n'
+            "Dim r As Object\ny = r.Value\nDebug.Print Err.Number\nErr.Clear\nx.Value = 1\nDebug.Print Err.Number"
+        )
+        self.assertEqual(self.prints(body), ["424", "424", "91", "424"])
+        status, message = self.outcome("Sub Test()\nx = 5\ny = x.Value\nEnd Sub\n")
+        self.assertEqual((status, "424" in message), ("stopped by a VBA error", True))
+
+    def test_a_run_that_would_not_end_is_stopped_and_said_so(self):
+        loop = "Sub Test()\nDo\nLoop\nEnd Sub\n"
+        self.assertEqual(self.outcome(loop, timeout=0.05)[0], "stopped: time limit")
+        deep = "Function Down(n)\nDown = Down(n + 1)\nEnd Function\nSub Test()\nx = Down(1)\nEnd Sub\n"
+        self.assertEqual(self.outcome(deep), ("stopped by a VBA error", "run-time error 28: Out of stack space"))
+        fine = "Function Sum(n)\nIf n > 0 Then Sum = n + Sum(n - 1)\nEnd Function\nSub Test()\nx = Sum(1500)\nEnd Sub\n"
+        self.assertEqual(self.outcome(fine)[0], "completed")  # as deep as VBA itself goes without trouble
+        with self.assertRaises(VBANotImplemented):  # an answer the box does not offer is never taken for one it does
+            self.prints('x = MsgBox("Go on?", vbYesNo)', answers=["ok"])
+
     def test_rounding_halves_to_even(self):
         out = self.prints("Debug.Print CInt(2.5) & CInt(3.5) & CLng(-2.5) & Round(2.5) & Round(0.125, 2)")
         self.assertEqual(out, ["24-220.12"])
@@ -167,10 +224,54 @@ class Values(Runner):
             self.prints("Dim i As Integer\ni = 40000")
         self.assertEqual(ctx.exception.number, 6)
 
-    def test_number_against_text_compares_without_error(self):
-        out, _, ledger = self.run_vba('Sub Test()\nIf 5 < "abc" Then Debug.Print "lt"\nEnd Sub\n')
-        self.assertEqual(out, ["lt"])
-        self.assertIn("CMP-NUMBER-TEXT", ledger.counts)
+    def test_a_number_against_text_goes_by_how_each_side_is_declared(self):
+        body = (
+            'Dim st As String, nn As Long\nst = "5"\nnn = 5\nv5 = 5\nvs = "5"\nva = "abc"\n'
+            'Debug.Print v5 = vs, v5 < va, st = v5, v5 = "05", nn = vs, nn = va, st = nn, Trim(vs) = v5, Trim$(vs) = v5\n'
+            'Select Case v5\nCase vs\nDebug.Print "variant"\nCase "5"\nDebug.Print "string"\nEnd Select\n'
+            'On Error Resume Next\nx = (5 = "abc")\nDebug.Print Err.Number'
+        )
+        # two Variants never match (the number is smaller); a Variant against a String is compared as text; a number
+        # against a Variant's text as numbers when the text is one; a number against a String as numbers, or error 13
+        self.assertEqual(self.prints(body), ["False True True False True False True False True", "string", "13"])
+
+    def test_numbers_round_and_convert_as_vba_does(self):
+        body = (
+            "Debug.Print Round(2.5), Round(2.675, 2), Round(1.015, 2), Str(0.5), Str(-0.25), CCur(1.23455)\n"
+            'Debug.Print CDbl("(5)"), CDbl("5-"), CDbl("1,2,3"), "&H10" + 1, IsNumeric("1D5"), IsNumeric("5%")\n'
+            "Dim c As Currency\nc = 10.5\n"
+            "Debug.Print TypeName(c + 1.5), TypeName(c * 2), TypeName(c * 1.5), TypeName(c / 2), TypeName(-c)\n"
+            "Debug.Print CCur(1.5) + 1.00005, CCur(0.0001) * CCur(0.5), CCur(1.2346) * CCur(1.2346), c = 10.50004\n"
+            'On Error Resume Next\nx = CDbl("True")\nDebug.Print Err.Number\nErr.Clear\n'
+            "x = CCur(922337203685477) + CCur(1)\nDebug.Print Err.Number"
+        )
+        # Round works on the Double times 10^n, halves to even; a Currency keeps four decimals, a half going to the
+        # even digit, and what it meets is made a Currency first (so 10.50004 equals it), but times a Double or
+        # divided it is a Double; "True" is no number; a Currency has an end
+        self.assertEqual(
+            self.prints(body),
+            [
+                "2 2.68 1.01  .5 -.25 1.2346",
+                "-5 -5 123 17 True False",
+                "Currency Currency Double Double Currency",
+                "2.5001 0 1.5242 True",
+                "13",
+                "6",
+            ],
+        )
+        with self.assertRaises(VBANotImplemented):  # whether "$5" is a number depends on the machine's currency sign
+            self.prints('Debug.Print IsNumeric("$5")')
+
+    def test_text_is_read_as_a_date_the_way_vba_reads_it(self):
+        body = (
+            'Debug.Print CDate("5 Jan 2024") = DateSerial(2024, 1, 5), CDate("Jan 5, 2024") = DateSerial(2024, 1, 5), '
+            'CDate("2024-01-05 13:00") = DateSerial(2024, 1, 5) + TimeSerial(13, 0, 0), '
+            'CDate("13/5/2024") = DateSerial(2024, 5, 13), DateSerial(24, 1, 1) = DateSerial(2024, 1, 1), '
+            'DateSerial(30, 1, 1) = DateSerial(1930, 1, 1), IsDate("45000"), IsDate("20240105"), CStr(CDate(0))'
+        )
+        # month names, ISO dates, a day past 12 read as the day, two-digit years (0-29 are 2000s), a bare number is no
+        # date to IsDate, and midnight of day 0 is a time
+        self.assertEqual(self.prints(body), ["True True True True True True False False 12:00:00 AM"])
 
     def test_format_rounds_halves_away_from_zero(self):
         self.assertEqual(
@@ -325,7 +426,7 @@ class ExcelModel(Runner):
             'Range("B1").Formula = "=1/0"\nRange("B2").Value = "x"\nRange("C2").Value = "y"\n'
             'Range("D1").Formula = "=VLOOKUP(""x"",B1:C2,2,)"\nRange("D2").Formula = "=IF(TRUE,,1)"\n'
             'Range("E1").Value = 1\nRange("E2").Value = True\nRange("F1").Formula2 = "=UNIQUE(E1:E2)"\n'
-            'Range("G1").Formula = "=1E+308*10"\n'
+            'Range("G1").Formula = "=1E+307*100"\n'
             'Range("H1").Formula = "=SUM(E1:E2)"\nRange("H2").Formula = "=H1*2"\nRange("H3").Formula = "=H1*3"\n'
             'Debug.Print Range("D1").Value, Range("D2").Value, Range("F2").Value, CStr(Range("G1").Value)\n'
             'Debug.Print Application.WorksheetFunction.XLookup(Range("B2"), Range("B1:B2"), Range("C1:C2"))\n'

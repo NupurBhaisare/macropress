@@ -50,6 +50,11 @@ ASSUMPTIONS = {
         "unverified",
         "Copying a range with hidden rows on a sheet that is not filtered copies the hidden rows too.",
     ),
+    "FILTER-WRITES-VISIBLE": (
+        "verified",
+        "Writing to or clearing a range on a filtered sheet changes only the rows the filter shows (a range it hides "
+        "whole is changed whole); an array written there starts again at each run of shown rows.",
+    ),
     "PASTE-WHOLE-ROWS": (
         "verified",
         "Pasting whole copied rows replaces the whole target rows; blank source cells clear target cells.",
@@ -60,10 +65,6 @@ ASSUMPTIONS = {
         "'TRUE'/'FALSE' a Boolean, a leading apostrophe forces text.",
     ),
     "WRITE-EMPTY-STRING": ("unverified", 'Writing "" to a cell leaves it empty.'),
-    "CMP-NUMBER-TEXT": (
-        "unverified",
-        "Comparing a number with text that is not numeric gives 'number < text' without an error.",
-    ),
     "FORMULAS-RECALCULATED": (
         "unverified",
         "Formulas whose inputs changed are recalculated before their values are read and before saving "
@@ -100,9 +101,30 @@ ASSUMPTIONS = {
         "A statement that fails under On Error Resume Next is skipped and its variable keeps its old value.",
     ),
     "MSGBOX-NO-UI": ("limitation", "MsgBox with only an OK button is logged and returns vbOK."),
-    "ROUND-DECIMAL": ("unverified", "Round() rounds halves to even on the decimal form of the number."),
+    "ROUND-HALF-EVEN": (
+        "verified",
+        "Round(x, n) rounds x times 10^n, as a Double, to a whole number with halves to even: Round(2.5) is 2, "
+        "Round(2.675, 2) is 2.68 and Round(1.015, 2) is 1.01.",
+    ),
     "CDEC-WINDOWS-ONLY": ("limitation", "CDec is evaluated, although Mac VBA reportedly cannot compile it."),
-    "NUMBER-TEXT-FORMAT": ("unverified", "Numbers are turned into text with '.' as the decimal separator."),
+    "NUMBER-TEXT-FORMAT": (
+        "limitation",
+        "Numbers are turned into text with '.' as the decimal separator, as US regional settings write them.",
+    ),
+    "DATE-TEXT-US": (
+        "limitation",
+        "A date is turned into text in the US short format (1/31/2024 1:05:00 PM). VBA uses the regional settings "
+        "of the machine it runs on.",
+    ),
+    "DATE-TEXT-ORDER": (
+        "limitation",
+        "A date in digits whose day and month could be swapped (1/5/2024) is read month first, as US regional "
+        "settings read it. VBA reads it as the settings of the machine it runs on say.",
+    ),
+    "CONDITIONAL-COMPILATION": (
+        "limitation",
+        "#If blocks are read as 64-bit Excel for Windows reads them: VBA7, Win64 and Win32 are true, Mac is false.",
+    ),
     "EVENTS-NOT-RUN": (
         "limitation",
         "Event procedures (Worksheet_Change, Workbook_Open, ...) are not run. Excel runs them when the workbook opens "

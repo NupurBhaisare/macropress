@@ -15,15 +15,18 @@ that does each part, so you know where to look when you want to change something
 - **Never write to the input.** The workbook is read once. Results go to a copy at another path, and saving over the
   input is refused.
 - **Repeatable runs.** `Now`, `Date`, `Time` and `Timer` read a clock that starts at `--now` and moves only as the
-  macros read it. Answers to `MsgBox` and `InputBox` come from `--answer`, and `Rnd` is refused. The same workbook,
-  buttons and answers always give the same result.
+  macros read it. Answers to `MsgBox` and `InputBox` come from `--answer`, `Environ` from `--env`, and `Rnd` is
+  refused. The same workbook, buttons and answers always give the same result.
+- **Excel is the judge.** What MacroPress does is set beside what Excel does: about a thousand small macros were run
+  in Excel and their answers recorded, and every test run compares ([tests/parity](../tests/parity)).
 
 ## 1. Read the workbook ([xlsx.py](../macropress/xlsx.py))
 
 An `.xlsm` file is a zip of XML parts. MacroPress first checks the sizes the zip declares, and refuses a file that
 would unzip to more than 512 MiB, or 256 MiB in one part, before reading anything: zip bombs stop there. It then reads
-each sheet's cells (values, formulas including shared ones, number formats), defined names, AutoFilters and tables
-into the workbook model. A workbook on the 1904 date system is refused, since its dates would be four years off.
+each sheet's cells (values, formulas including shared ones, and number formats, of empty cells, rows and columns
+too), defined names, AutoFilters, tables and the workbook's calculation mode into the workbook model. A workbook on
+the 1904 date system is refused, since its dates would be four years off.
 
 ## 2. Find the buttons ([xlsx.py](../macropress/xlsx.py), `find_entry_points`)
 
@@ -74,8 +77,9 @@ The converted functions run against the model:
 | [values.py](../macropress/values.py) | VBA's values: Variants and their conversions, arithmetic and comparison, `Empty`/`Null`/`Nothing`, arrays, error values, overflow |
 | [builtins.py](../macropress/builtins.py) | VBA's functions: `Left`, `InStr`, `Format`, `DateAdd`, `CDbl`, `MsgBox`, ... |
 | [excel/](../macropress/excel/) | Excel's objects: `Application`, `Workbook`, `Worksheet`, `Range`, `Sort`, `AutoFilter`, `WorksheetFunction`, copy and paste, the selection and grouped sheets |
+| [entry.py](../macropress/entry.py), [numfmt.py](../macropress/numfmt.py) | What Excel makes of text written to a cell (`"$5"`, `"5%"`, `"1,234"`), and number formats: what VBA reads from a cell that has one, and which format a write leaves |
 | [formula.py](../macropress/formula.py) | Worksheet formulas: a tokenizer and parser for Excel's formula syntax, and an evaluator for the functions listed in [supported.md](supported.md) |
-| [excel/book.py](../macropress/excel/book.py) | Recalculation: which formulas read which cells, which are stale after a write, and calculating them before their values are read |
+| [excel/book.py](../macropress/excel/book.py) | Recalculation: which formulas read which cells (an index, so a write finds them without passing the rest), which are stale after a write, and calculating them before their values are read |
 
 Cells hold values the way Excel stores them: numbers as floats, text as strings, `TRUE` and `FALSE` as booleans,
 errors as error values, and dates as numbers with a date format. Reading `Range.Value` turns them back into what VBA
@@ -95,8 +99,9 @@ or deleted, or a renamed sheet that a chart still refers to, stop the save rathe
 Before and after the buttons, MacroPress takes a snapshot of every sheet's cells and view. Their difference becomes
 the report's `changes`.
 
-Some of what the model does rests on assumptions about Excel, for example how `AutoFilter` on a header row picks its
-range. The **ledger** lists each one with its status: `verified` (checked against Excel's own output), `unverified`
-(believed right, not yet checked), or `limitation` (a known difference). Every time the model relies on one, it notes
-it, and the report lists the unverified ones and limitations that applied to the run. Checking an unverified
-assumption against Excel, and marking it verified, is one of the most useful contributions there is.
+Some of what the model does rests on what Excel does in corners that are easy to get wrong, for example how
+`AutoFilter` on a header row picks its range. The **ledger** lists each one with its status: `verified` (checked
+against Excel's own output), `unverified` (believed right, not yet checked), or `limitation` (a known difference,
+such as following US regional settings). Every time the model relies on one, it notes it, and the report lists the
+unverified ones and limitations that applied to the run. Today every entry is verified or a limitation; a new
+behaviour starts as unverified, and adding a probe for it to [tests/parity](../tests/parity) is what verifies it.

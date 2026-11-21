@@ -5,6 +5,7 @@ The workbook is built here, a minimal package Excel can open, so no real workboo
 
 import json
 import re
+import time
 import zipfile
 
 import pytest
@@ -377,6 +378,20 @@ def test_a_press_takes_what_its_caller_gives_and_says_what_it_could_not_use(tmp_
     assert main([*argv, "--env", "USERNAME=nupur"]) == 0
     assert main([*argv, "--env", "USERNAME"]) == 1
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["error"] == "--env must be NAME=VALUE"
+
+
+def test_many_writes_to_a_workbook_of_many_formulas_take_time_in_proportion(tmp_path):
+    def seconds(n):
+        vba = (
+            f'For i = 1 To {n}\nCells(i, 2).Formula = "=A" & i & "*2"\nNext\n'
+            f"For i = 1 To {n}\nCells(i, 1).Value = i\nx = Cells(i, 2).Value\nNext\nDebug.Print x"
+        )
+        start = time.perf_counter()
+        assert _run(runtime.Context(book=Book.blank()), vba) == [str(2 * n)]
+        return time.perf_counter() - start
+
+    # eight times the work: about eight times as long, where looking at every formula on each write took 64 times
+    assert seconds(3200) < 24 * max(seconds(400), 0.01)
 
 
 def test_buttons_are_listed_by_the_text_they_show(tmp_path):

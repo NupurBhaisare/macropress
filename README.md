@@ -28,8 +28,10 @@ on Windows. That is slow and fragile, hard to run on a server or in a container,
 every macro full access to the machine it runs on.
 
 MacroPress treats the VBA as source code instead. It converts it to Python and runs it against a model of the parts
-of Excel that macros use, built to give the same results as Excel. Where the model has a gap, the run stops with
-"not modelled", so you don't get a workbook that is quietly wrong.
+of Excel that macros use, built to give the same results as Excel and checked against Excel itself: about a thousand
+small macros were run in Excel, and every test run compares MacroPress's answers with Excel's
+([tests/parity](tests/parity)). Where the model has a gap, the run stops with "not modelled", so you don't get a
+workbook that is quietly wrong.
 
 It was built so an AI agent could run the workbooks people send it: list the buttons, press the right ones in order,
 and hand back the result. It works just as well in a script, a scheduled job or a test suite.
@@ -48,8 +50,25 @@ and hand back the result. It works just as well in a script, a scheduled job or 
   `Date` and `Timer` run on a clock you can fix, so a run can be repeated exactly.
 - **Saves a copy and never writes to the original**: only the sheets the macros changed are rewritten. Everything
   else in the file (the VBA project, styles, drawings, the other sheets) is copied byte for byte.
-- **Reports in JSON** what each button did, which cells changed, and which of its assumptions about Excel the run
-  relied on that have not yet been checked against Excel. What stops a run is in the report, not in a traceback.
+- **Reports in JSON** what each button did, which cells changed, and where the run met something MacroPress
+  knowingly does differently from Excel (it follows US regional settings, for one). What stops a run is in the
+  report, not in a traceback.
+
+## What it does not do
+
+MacroPress covers macros that move and compute data. It stops, at the line and with the reason, when a macro:
+
+- sets formatting: fonts, colours, borders, column widths, number formats (it reads number formats, and keeps the
+  ones in the workbook);
+- inserts or deletes rows, columns or sheets, or uses `Range.Find`, `SpecialCells`, charts or pivot tables;
+- opens or saves other workbooks, reads or writes files, sends mail, or calls Windows through `Declare` or
+  `CreateObject`;
+- uses class modules, UserForms or user-defined types;
+- writes text that Excel would read as a date or a time by the machine's regional settings (`"1/2"`, `"Jan 5"`).
+
+Event procedures (`Worksheet_Change`, `Workbook_Open`) do not run; the report says when a workbook has them.
+[docs/supported.md](docs/supported.md) has the whole list. Many report-building macros format what they build, so
+expect some buttons to stop: the report names the line, and the copy holds what was done up to it.
 
 ## Install
 
@@ -156,7 +175,7 @@ if not macropress.succeeded(report):
 | `steps` | One entry per button pressed, with its `status`: `completed`; `stopped by a VBA error` (the macro raised an error, as it would in Excel); `stopped: not modelled` (it needs something MacroPress does not model); `stopped: time limit` (it ran past `--timeout`); `stopped: converter error` (a bug in MacroPress, please report it); or `not found`. The first button that does not complete ends the run. |
 | `output` | The saved copy. It is saved even when a button stops, with the changes made up to that point. |
 | `changes` | Per sheet: how many cells changed, the rows with data before and after, whether hidden rows changed, and a few example cells. |
-| `unverified_behaviours` | Assumptions about Excel this run relied on that have not been checked against Excel, and known differences from Excel that applied to this run. |
+| `unverified_behaviours` | Where this run met something MacroPress knowingly does differently from Excel (US regional settings, formatting that is not modelled), and anything it relied on that has not been checked against Excel. |
 | `messages` | What the macros showed: `MsgBox` and `InputBox` prompts, and `Debug.Print` output. |
 | `answers_unused` | The answers no question took, when there are any: the macros did not ask what the caller expected. |
 | `error` | Whatever stopped the run outside the buttons, with the stage it stopped at: reading the workbook, converting the VBA, saving the copy. A copy that could not be saved (over the workbook itself, or with another extension) is refused here before anything runs. |

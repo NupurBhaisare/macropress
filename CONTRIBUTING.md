@@ -6,9 +6,10 @@ Thank you for helping. The most useful contributions, roughly in order:
    report, and what Excel does instead. Use made-up data: this repository is public.
 2. **Something that isn't modelled yet**: a VBA function, an Excel member, a worksheet function, or a `Format`
    pattern that stopped your macro with `not modelled`.
-3. **Checking an assumption against Excel.** [macropress/ledger.py](macropress/ledger.py) lists what MacroPress
-   believes about Excel but has not checked. If you have Excel, you can check one, add a test, and mark it
-   `verified`.
+3. **Checking MacroPress against Excel.** [tests/parity](tests/parity) holds about a thousand small macros with the
+   answers Excel gave. If you have Excel, add probes for something that isn't covered, record what Excel answers,
+   and see whether MacroPress agrees. Excel for Windows would be especially welcome: the answers so far come from
+   Excel for Mac.
 4. Better docs and examples.
 
 Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -22,7 +23,7 @@ SimpleParse.
 git clone https://github.com/NupurBhaisare/macropress
 cd macropress
 uv sync                       # creates .venv with MacroPress and its development tools
-uv run pytest                 # the tests: they take a few seconds
+uv run pytest                 # the tests: they take about half a minute
 uv run ruff check .           # lint
 uv run ruff format .          # format
 ```
@@ -34,8 +35,9 @@ uv run ruff format .          # format
 - **Refuse rather than guess.** When the model can't do something exactly as Excel does, raise `VBANotImplemented`
   with a message that names what is missing. A half-right result that looks complete is worse than a clear stop.
 - **Match Excel, not the documentation.** Excel's documented behaviour and its actual behaviour sometimes differ.
-  When a change relies on Excel behaving a certain way and you haven't checked it in Excel, add an `unverified` entry
-  to the ledger and call `note()` where the model relies on it, so every report that depends on it says so.
+  The way to know is a probe in [tests/parity](tests/parity), with Excel's recorded answer. When a change relies on
+  Excel behaving a certain way and you haven't checked it in Excel, add an `unverified` entry to the ledger and call
+  `note()` where the model relies on it, so every report that depends on it says so.
 - **Never write to the input workbook**, and keep everything the model doesn't understand byte for byte in the saved
   copy.
 - **Test what changed, in a way that fails without the change.** Most tests run a few lines of VBA and check what
@@ -53,6 +55,7 @@ uv run ruff format .          # format
 | a worksheet function in formulas | an `f_<name>` function in [formula.py](macropress/formula.py), added to its `FUNCTIONS` table | formulas using it are then calculated instead of saved for Excel to calculate |
 | a `Format` pattern | `b_format` in [builtins.py](macropress/builtins.py) | |
 | an assumption about Excel | an entry in [ledger.py](macropress/ledger.py) and a `note()` where it is relied on | |
+| a check against Excel | a test in [tests/parity/probes.py](tests/parity/probes.py) | record Excel's answers with `tests/parity/record.py` (see [tests/parity/README.md](tests/parity/README.md)) |
 
 ## The examples
 

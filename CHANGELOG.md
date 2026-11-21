@@ -82,3 +82,9 @@ Found by running those macros in both Excel and MacroPress and comparing every a
   number is not "more than 500"; `INDEX` with one index into a block of several rows and columns is `#REF!`. Every
   behaviour the report used to call unverified has now been checked against Excel.
 
+### Changed
+
+- The docs say what MacroPress does not do ([README](README.md#what-it-does-not-do)), how cells, number formats and
+  regional settings are treated ([docs/supported.md](docs/supported.md)), and where its one known difference in the
+  language lies: a single whole-number type where VBA has `Integer` and `Long`.
+

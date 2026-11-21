@@ -64,8 +64,13 @@ import subprocess
 
 
 def _macropress(*args, timeout):
-    done = subprocess.run(["macropress", *args], capture_output=True, text=True, timeout=timeout)
-    return json.loads(done.stdout.strip().splitlines()[-1])  # the report is always the last line
+    try:
+        done = subprocess.run(["macropress", *args], capture_output=True, text=True, timeout=timeout)
+        return json.loads(done.stdout.strip().splitlines()[-1])  # the report is always the last line
+    except subprocess.TimeoutExpired:
+        return {"error": f"macropress was still running after {timeout} seconds"}
+    except (IndexError, ValueError, OSError) as err:  # no output, output that is not the report, not installed
+        return {"error": f"macropress gave no report: {type(err).__name__}: {err}"}
 
 
 def list_workbook_buttons(path):
@@ -77,7 +82,8 @@ def press_workbook_buttons(path, buttons, answers=(), out_dir="outputs"):
     out = os.path.join(out_dir, os.path.splitext(os.path.basename(path))[0] + "-done.xlsm")
     # --button=... keeps a caption that starts with "-" from being read as an option
     args = ["press", path, f"--out={out}", *(f"--button={b}" for b in buttons), *(f"--answer={a}" for a in answers)]
-    return _macropress(*args, timeout=900)
+    # --timeout stops the macros themselves, with a report of the steps that ran; the longer one is for the process
+    return _macropress(*args, "--timeout=600", timeout=900)
 ```
 
 ### As an MCP server
@@ -116,7 +122,10 @@ The tools work best with a few rules in the agent's instructions:
 - A step that is `stopped: not modelled` means MacroPress cannot do that part. Tell the user what was missing (the
   step's `message`), and don't present the copy as finished.
 - When a step stops because a macro asks a question (`pass an answer`), ask the user, then press again with their
-  answers in `answers`.
+  answers in `answers`. A report with `answers_unused` means the macros did not ask what you answered: check the
+  buttons and their order before trusting the result.
+- A step that is `stopped: time limit` ran past the limit. Say so; don't press it again with a longer limit unless
+  the user asks.
 - Say the run worked only when every step is `completed`. Mention `unverified_behaviours` when the user is relying on
   exact results.
 - Hand back the workbook at `output`. The original is unchanged.

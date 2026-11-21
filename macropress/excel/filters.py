@@ -76,9 +76,12 @@ class OpCriterion(Criterion):
             return wildcard_regex(operand).fullmatch(_shown(sheet, r, c)) is not None
         if op == "<>":  # "is not": by value against a number, by what the cell shows against text
             return float(value) != number if numbers else wildcard_regex(operand).fullmatch(_shown(sheet, r, c)) is None
-        if blank:
+        if numbers:  # more or less than a number: only a number is, never text that reads as one
+            a, b = float(value), number
+        elif number is None and isinstance(value, str) and value != "":  # before or after a text: only text is
+            a, b = _shown(sheet, r, c).casefold(), operand.casefold()
+        else:
             return False
-        a, b = (float(value), number) if numbers else (_shown(sheet, r, c).casefold(), operand.casefold())
         return {">": a > b, "<": a < b, ">=": a >= b, "<=": a <= b}[op]
 
     def describe(self):
@@ -136,6 +139,12 @@ def apply_filter(sheet):
     af = sheet.autofilter
     app = sheet.book.app
     app.note("AF-MATCH-TEXT")
+    below = af.r2
+    while below < MAX_ROW and any(not sheet.is_empty(below + 1, c) for c in range(af.c1, af.c2 + 1)):
+        below += 1  # rows of data directly below the range are the filter's too: Excel takes them in
+    if below != af.r2:
+        app.note("AF-RANGE-EXTENDED", f"{sheet.name}: down to row {below}")
+        af.r2 = below
     for r in range(af.r1 + 1, af.r2 + 1):
         visible = all(crit.matches(sheet, r, af.c1 + f - 1) for f, crit in af.criteria.items())
         if visible:
@@ -145,7 +154,4 @@ def apply_filter(sheet):
             sheet.hidden_rows.discard(r)
         else:
             sheet.hidden_rows.add(r)
-    below = af.r2 + 1
-    if below <= MAX_ROW and any(not sheet.is_empty(below, c) for c in range(af.c1, af.c2 + 1)):
-        app.note("AF-RANGE-NOT-EXTENDED", f"{sheet.name}: data continues in row {below}")
     sheet.changed = True

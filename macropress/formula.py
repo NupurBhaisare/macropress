@@ -877,8 +877,8 @@ def f_index(ev, args):
         c = int(num(ev.arg(args, 2, 0.0, blank=0.0)))
     elif rows == 1:
         r, c = 1, r
-    elif cols == 1 or r == 0:
-        c = 1 if cols == 1 else 0
+    elif cols == 1:
+        c = 1
     else:
         raise _Err(XLError("#REF!"))
     if r < 0 or c < 0:

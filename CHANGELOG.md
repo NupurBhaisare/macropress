@@ -21,9 +21,13 @@ The first public release.
 - A JSON report of each button's outcome, the cells that changed, and the assumptions about Excel the run relied on.
 - Three example workbooks, built from their VBA sources and checked against Excel for Mac.
 
+- A parity suite (`tests/parity`): about a thousand small macros whose 3,000 answers were recorded from Excel itself
+  and are compared with MacroPress's on every test run. The answers MacroPress knowingly gives otherwise are listed
+  with their reasons, so a difference can neither appear nor go away unnoticed.
+
 ### Fixed
 
-Found by running some 990 small macros in both Excel and MacroPress and comparing every answer.
+Found by running those macros in both Excel and MacroPress and comparing every answer.
 
 - **VBA the converter stopped at or ran wrongly**: `Case Is > 5`; `Enum` blocks (a member counts on from the one
   before it, and `Shade.Red` names one); `Declare` statements and `#If ... #End If`, read as 64-bit Excel for Windows
@@ -73,4 +77,8 @@ Found by running some 990 small macros in both Excel and MacroPress and comparin
   could not be saved, over the workbook itself or with another extension, is refused before the macros run instead of
   after. The report lists answers no question took (`answers_unused`), and says when a module's `#If` blocks were
   read as Windows reads them.
+- **More from the last recording**: an `AutoFilter` that is given a criterion takes in the rows of data directly
+  below its range; `>` and `<` in a filter compare numbers with numbers and text with text, so text that reads as a
+  number is not "more than 500"; `INDEX` with one index into a block of several rows and columns is `#REF!`. Every
+  behaviour the report used to call unverified has now been checked against Excel.
 

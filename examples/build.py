@@ -32,9 +32,10 @@ def d(text):
     return dt.date.fromisoformat(text)
 
 
-# A sheet is (name, columns, rows, buttons): columns are widths; a row is a list of cells, where a cell is a value or a
-# (value, style) pair (styles: "bold", "money", "date", "percent"), and (None, style) is an empty cell formatted ahead
-# for what the macros write there; a button is (caption, macro, from cell, to cell).
+# A sheet is (name, columns, rows, buttons): columns are widths, or (width, style) for a column formatted as a whole; a
+# row is a list of cells, where a cell is a value or a (value, style) pair (styles: "bold", "money", "date",
+# "percent"), and (None, style) is an empty cell formatted ahead for what the macros write there; a button is
+# (caption, macro, from cell, to cell).
 MONEY, DATE = (None, "money"), (None, "date")
 ORDER_HEADER = [("Order", "bold"), ("Date", "bold"), ("Customer", "bold"), ("Region", "bold"), ("Amount", "bold")]
 
@@ -466,18 +467,25 @@ def _serial(day):
     return (day - dt.date(1899, 12, 30)).days
 
 
-def _sheet_xml(index, columns, rows, strings, has_buttons):
-    cols = "".join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>' for i, w in enumerate(columns, 1))
+def _sheet_xml(index, columns, rows, strings, has_buttons, styles=None):
+    styles = styles or STYLES
+    cols = ""
+    for i, column in enumerate(columns, 1):
+        width, style = column if isinstance(column, tuple) else (column, None)
+        formatted = f' style="{styles[style]}"' if style else ""
+        cols += f'<col min="{i}" max="{i}" width="{width}"{formatted} customWidth="1"/>'
     body = []
     for r, row in enumerate(rows, 1):
         cells = []
         for c, cell in enumerate(row, 1):
             value, style = cell if isinstance(cell, tuple) else (cell, None)
             ref = f"{_col_letters(c)}{r}"
-            s = f' s="{STYLES[style]}"' if STYLES[style] else ""
+            s = f' s="{styles[style]}"' if styles[style] else ""
             if value is None:
                 if s:
                     cells.append(f'<c r="{ref}"{s}/>')
+            elif isinstance(value, bool):
+                cells.append(f'<c r="{ref}"{s} t="b"><v>{int(value)}</v></c>')
             elif isinstance(value, str):
                 strings.setdefault(value, len(strings))
                 cells.append(f'<c r="{ref}"{s} t="s"><v>{strings[value]}</v></c>')
@@ -544,11 +552,35 @@ STYLES_XML = (
 )
 
 
-def build_workbook(name, spec=None):
-    """The .xlsm for example `name`: its sheets and buttons from `spec`, its VBA from the .bas files in its folder."""
+def more_styles(formats):
+    """The style sheet with more number formats, for workbooks that need them: `formats` is [(style name, one of
+    Excel's own formats by its number, or a format code)]. Returns the XML and every style's index by name."""
+    styles, xfs, codes = dict(STYLES), [], []
+    for style, number_format in formats:
+        if not isinstance(number_format, int):
+            code = escape(number_format, {'"': "&quot;"})
+            codes.append(f'<numFmt numFmtId="{166 + len(codes)}" formatCode="{code}"/>')
+            number_format = 165 + len(codes)
+        styles[style] = len(STYLES) + len(xfs)
+        xfs.append(
+            f'<xf numFmtId="{number_format}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+        )
+    xml = (
+        STYLES_XML.replace('<cellXfs count="5">', f'<cellXfs count="{5 + len(xfs)}">')
+        .replace("</cellXfs>", "".join(xfs) + "</cellXfs>")
+        .replace('<numFmts count="2">', f'<numFmts count="{2 + len(codes)}">')
+        .replace("</numFmts>", "".join(codes) + "</numFmts>")
+    )
+    return xml, styles
+
+
+def build_workbook(name, spec=None, folder=None):
+    """The .xlsm for example `name`: its sheets and buttons from `spec`, its VBA from the .bas files in its folder.
+    A spec may bring more number formats than the examples use, as "styles": see more_styles."""
     spec = spec or EXAMPLES[name]
-    folder = HERE / name
+    folder = folder or HERE / name
     sheets = spec["sheets"]
+    styles_xml, styles = more_styles(spec["styles"]) if spec.get("styles") else (STYLES_XML, STYLES)
     modules = [("ThisWorkbook", "document", document_module("ThisWorkbook", WORKBOOK_BASE))]
     modules += [(f"Sheet{i}", "document", document_module(f"Sheet{i}", SHEET_BASE)) for i in range(1, len(sheets) + 1)]
     for bas in sorted(folder.glob("*.bas")):
@@ -564,7 +596,7 @@ def build_workbook(name, spec=None):
     ]
     workbook_rels = []
     for i, (_name, columns, rows, buttons) in enumerate(sheets, 1):
-        parts[f"xl/worksheets/sheet{i}.xml"] = _sheet_xml(i, columns, rows, strings, bool(buttons))
+        parts[f"xl/worksheets/sheet{i}.xml"] = _sheet_xml(i, columns, rows, strings, bool(buttons), styles)
         overrides.append(
             (
                 f"/xl/worksheets/sheet{i}.xml",
@@ -593,7 +625,7 @@ def build_workbook(name, spec=None):
         f'<sheets>{sheet_list}</sheets><calcPr calcId="191029"/></workbook>'
     )
     parts["xl/_rels/workbook.xml.rels"] = _rels(workbook_rels)
-    parts["xl/styles.xml"] = STYLES_XML
+    parts["xl/styles.xml"] = styles_xml
     shared = "".join(f'<si><t xml:space="preserve">{escape(s)}</t></si>' for s in strings)
     parts["xl/sharedStrings.xml"] = (
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<sst xmlns="{MAIN}" '

@@ -1,0 +1,269 @@
+{
+ "differences": [
+  {
+   "why": "Whole numbers. MacroPress has one whole-number type where VBA has Integer and Long: TypeName goes by the number's size, and two Integers whose sum or product passes 32,767 give the number where VBA stops with error 6.",
+   "tests": {
+    "T_enum3": {
+     "11": "[Integer]",
+     "12": "[Integer]"
+    },
+    "T_cur1": {
+     "10": "[Integer]",
+     "11": "[Integer]"
+    },
+    "T_cur3": {
+     "13": "[Integer:3]",
+     "14": "[Integer:1]"
+    },
+    "T_procs": {
+     "8": "[Integer:0]"
+    },
+    "T_intlit": {
+     "1": 0.0,
+     "4": 0.0
+    },
+    "T_overflow": {
+     "1": 0.0,
+     "2": 0.0,
+     "4": 0.0
+    },
+    "T_bitwise": {
+     "10": "[Integer:-1]"
+    },
+    "T_types1": {
+     "4": "[Integer]"
+    },
+    "T_types2": {
+     "8": "[Integer]"
+    }
+   }
+  },
+  {
+   "why": "Regional settings. The Mac that recorded Excel's answers reads and writes dates day first; MacroPress follows US settings, month first.",
+   "tests": {
+    "T_cdate1": {
+     "1": 45296.0
+    },
+    "T_cdate12": {
+     "2": 45413.0
+    },
+    "T_cstrdate": {
+     "1": "[1/5/2024]",
+     "2": "[1/5/2024]",
+     "3": "[1/5/2024 12:00:00 PM]",
+     "6": "[12/31/1899 12:00:00 PM]"
+    }
+   }
+  },
+  {
+   "why": "DateDiff. Excel for Mac counts the whole hours and days that have passed; MacroPress counts the hour and day boundaries crossed, as VBA's documentation has it.",
+   "tests": {
+    "T_ddiff3": {
+     "1": 1.0
+    },
+    "T_ddiff_h": {
+     "2": 1.0,
+     "3": 1.0,
+     "4": 1.0,
+     "5": 1.0,
+     "7": 1.0
+    }
+   }
+  },
+  {
+   "why": "UCase of ß. Excel for Mac gives a single S; MacroPress gives SS.",
+   "tests": {
+    "T_trim": {
+     "6": "[STRASSE]"
+    }
+   }
+  },
+  {
+   "why": "The name of Excel's own short date format. The Mac that recorded the answers names it m/d/yy, by its regional settings; MacroPress names it m/d/yyyy, as NumberFormat does under US settings.",
+   "tests": {
+    "T_dfmt07": {
+     "2": "[m/d/yyyy h:mm]"
+    },
+    "T_dfmt08": {
+     "2": "[m/d/yyyy]"
+    },
+    "T_m01a": {
+     "12": "[m/d/yyyy]"
+    },
+    "T_m04a": {
+     "12": "[m/d/yyyy]"
+    },
+    "T_m05a": {
+     "12": "[m/d/yyyy]"
+    },
+    "T_m06a": {
+     "12": "[m/d/yyyy]"
+    },
+    "T_m07a": {
+     "2": "[m/d/yyyy]",
+     "4": "[m/d/yyyy]",
+     "12": "[m/d/yyyy]"
+    },
+    "T_m07b": {
+     "4": "[m/d/yyyy]",
+     "8": "[m/d/yyyy]",
+     "10": "[m/d/yyyy]",
+     "12": "[m/d/yyyy]"
+    },
+    "T_m09a": {
+     "12": "[m/d/yyyy]"
+    },
+    "T_m13a": {
+     "12": "[m/d/yyyy]"
+    },
+    "T_m14a": {
+     "12": "[m/d/yyyy]"
+    },
+    "T_n01": {
+     "1": "[m/d/yyyy h:mm]",
+     "3": "[m/d/yyyy h:mm]",
+     "5": "[m/d/yyyy h:mm]",
+     "6": "[m/d/yyyy h:mm]",
+     "7": "[m/d/yyyy h:mm]",
+     "8": "[m/d/yyyy h:mm]",
+     "9": "[m/d/yyyy h:mm]",
+     "10": "[m/d/yyyy h:mm]",
+     "11": "[m/d/yyyy]",
+     "12": "[m/d/yyyy h:mm]",
+     "13": "[m/d/yyyy h:mm]",
+     "15": "[m/d/yyyy h:mm]"
+    },
+    "T_n02": {
+     "1": "[m/d/yyyy h:mm]",
+     "3": "[m/d/yyyy]",
+     "5": "[m/d/yyyy]",
+     "6": "[m/d/yyyy]",
+     "7": "[m/d/yyyy]",
+     "8": "[m/d/yyyy]",
+     "9": "[m/d/yyyy]",
+     "10": "[m/d/yyyy]",
+     "11": "[m/d/yyyy]",
+     "12": "[m/d/yyyy]",
+     "13": "[m/d/yyyy]",
+     "15": "[m/d/yyyy]"
+    },
+    "T_v2date": {
+     "6": "[m/d/yyyy]"
+    },
+    "T_timecell": {
+     "4": "[m/d/yyyy h:mm]"
+    }
+   }
+  }
+ ],
+ "refused": {
+  "T_addr2": "Range.Range is not modelled",
+  "T_bigformula": "reading B6!N6: a formula whose value could not be calculated",
+  "T_cdbl": "reading '$5' as a number: whether VBA takes a currency sign ",
+  "T_cdblb0": "reading '($5)' as a number: whether VBA takes a currency sig",
+  "T_cdblb3": "reading '$ 5' as a number: whether VBA takes a currency sign",
+  "T_cf03": "writing a Currency to a cell formatted as Text",
+  "T_copy1toN": "pasting 1x1 copied cells into $AQ$1:$AQ$3, another size",
+  "T_ddiff1": "DateDiff interval 'q'",
+  "T_ddiff2": "DateDiff interval 'ww'",
+  "T_h031": "reading FX!AH31: a formula whose value could not be calculat",
+  "T_h032": "reading FX!AH32: a formula whose value could not be calculat",
+  "T_h033": "reading FX!AH33: a formula whose value could not be calculat",
+  "T_h036": "reading FX!AH36: a formula whose value could not be calculat",
+  "T_h039": "reading FX!AH39: a formula whose value could not be calculat",
+  "T_h064": "reading FX!AH64: a formula whose value could not be calculat",
+  "T_h068": "reading FX!AH68: a formula whose value could not be calculat",
+  "T_h070": "reading FX!AH70: a formula whose value could not be calculat",
+  "T_h071": "reading FX!AH71: a formula whose value could not be calculat",
+  "T_h073": "reading FX!AH73: a formula whose value could not be calculat",
+  "T_h077": "reading FX!AH77: a formula whose value could not be calculat",
+  "T_h089": "reading FX!AH89: a formula whose value could not be calculat",
+  "T_h103": "reading FX!AH103: a formula whose value could not be calcula",
+  "T_ii04": "reading FX!AL2: a formula whose value could not be calculate",
+  "T_ii05": "reading FX!AL9: a formula whose value could not be calculate",
+  "T_ii06": "reading FX!AM2: a formula whose value could not be calculate",
+  "T_ii07": "reading FX!AM9: a formula whose value could not be calculate",
+  "T_ii08": "reading FX!AN2: a formula whose value could not be calculate",
+  "T_ii09": "reading FX!AN3: a formula whose value could not be calculate",
+  "T_ii11": "reading FX!AO3: a formula whose value could not be calculate",
+  "T_ii12": "reading FX!AP2: a formula whose value could not be calculate",
+  "T_ii13": "reading FX!AP3: a formula whose value could not be calculate",
+  "T_ii14": "reading FX!AP9: a formula whose value could not be calculate",
+  "T_ii18": "reading FX!AL3: a formula whose value could not be calculate",
+  "T_ii19": "reading FX!AN9: a formula whose value could not be calculate",
+  "T_ii20": "reading FX!AO9: a formula whose value could not be calculate",
+  "T_ii21": "reading FX!AP1: a formula whose value could not be calculate",
+  "T_ii22": "reading FX!AJ1: a formula whose value could not be calculate",
+  "T_ii23": "reading FX!AK1: a formula whose value could not be calculate",
+  "T_ii24": "reading FX!AL1: a formula whose value could not be calculate",
+  "T_ii_f2": "reading FX!AT2: a formula whose value could not be calculate",
+  "T_isnum1": "reading '$5' as a number: whether VBA takes a currency sign ",
+  "T_isnumb0": "reading '($5)' as a number: whether VBA takes a currency sig",
+  "T_isnumb3": "reading '$ 5' as a number: whether VBA takes a currency sign",
+  "T_j007": "reading FX!AV7: a formula whose value could not be calculate",
+  "T_j008": "reading FX!AV8: a formula whose value could not be calculate",
+  "T_j009": "reading FX!AV9: a formula whose value could not be calculate",
+  "T_j010": "reading FX!AV10: a formula whose value could not be calculat",
+  "T_j026": "reading FX!AV26: a formula whose value could not be calculat",
+  "T_m08b": "writing a Currency to a cell formatted as Text",
+  "T_shown": "the displayed text of B5!L6: -123.4567 may not fit its colum",
+  "T_strnum": "reading '$5' as a number: whether VBA takes a currency sign ",
+  "T_text3": "the displayed text of FX!M2: 46083 in the number format yyyy",
+  "T_text4": "the displayed text of FX!M3: 0.08 in the number format 0%",
+  "T_text5": "the displayed text of S!AB3: 45296 in the number format m/d/",
+  "T_text6": "the displayed text of S!AB5: 123456789012 in the number form",
+  "T_txt01": "the displayed text of B4!F1: 1234.56789 may not fit its colu",
+  "T_txt02": "the displayed text of B4!F2: 123456789 may not fit its colum",
+  "T_txt03": "the displayed text of B4!F3: 12345678901 may not fit its col",
+  "T_txt04": "the displayed text of B4!F4: 0.000012345 may not fit its col",
+  "T_txt05": "the displayed text of B4!F5: 1234567.891 may not fit its col",
+  "T_txt06": "the displayed text of B4!F6: -1234567.5 may not fit its colu",
+  "T_txt07": "the displayed text of B4!F7: 0.1234567891234 in the number f",
+  "T_txt08": "the displayed text of B4!F8: 1E+15 in the number format Gene",
+  "T_txt09": "the displayed text of B4!F9: 1.5E-10 in the number format Ge",
+  "T_txt10": "the displayed text of B4!F10: 99999999999 may not fit its co",
+  "T_txt11": "the displayed text of B4!F11: 123456.789012 in the number fo",
+  "T_txt13": "the displayed text of B4!F13: 1234567.8 may not fit its colu",
+  "T_txt15": "the displayed text of B4!F15: 0.333333333333333 in the numbe",
+  "T_txt16": "the displayed text of B4!F16: 100000000000 in the number for",
+  "T_txt18": "the displayed text of B4!F18: 123456789.5 may not fit its co",
+  "T_txt19": "the displayed text of B4!F19: -12345678901 in the number for",
+  "T_txt20": "the displayed text of B4!F20: 0.00001234 may not fit its col",
+  "T_txtnarrow": "the displayed text of B4!E1: 123456 may not fit its column a",
+  "T_visible": "setting Worksheet.Visible is not modelled",
+  "T_w12": "writing '1/2' to a cell: Excel turns it into a date or a tim",
+  "T_w23": "writing '12-13' to a cell: Excel turns it into a date or a t",
+  "T_w24": "writing 'Jan 5' to a cell: Excel turns it into a date or a t",
+  "T_w25": "writing '3:30' to a cell: Excel turns it into a date or a ti",
+  "T_w27": "writing '12:00 AM' to a cell: Excel turns it into a date or ",
+  "T_w31": "writing '2024-01-05' to a cell: Excel turns it into a date o",
+  "T_w32": "writing '5 Jan 2024' to a cell: Excel turns it into a date o",
+  "T_w33": "writing '1-2-3' to a cell: Excel turns it into a date or a t",
+  "T_w39": "writing '1:2:3' to a cell: Excel turns it into a date or a t",
+  "T_w41": "writing '1/2/3' to a cell: Excel turns it into a date or a t",
+  "T_w42": "writing '12/25' to a cell: Excel turns it into a date or a t",
+  "T_w43": "writing '25/12' to a cell: Excel turns it into a date or a t",
+  "T_w44": "writing '3 pm' to a cell: Excel turns it into a date or a ti",
+  "T_w57": "writing '1/0' to a cell: Excel turns it into a date or a tim",
+  "T_w58": "writing 'Feb 2024' to a cell: Excel turns it into a date or ",
+  "T_wsfn2": "WorksheetFunction.Count is not modelled",
+  "T_x02": "writing 'Jan 2024' to a cell: Excel turns it into a date or ",
+  "T_x13": "writing '1/2 ' to a cell: Excel turns it into a date or a ti",
+  "T_x19": "writing 'March 5' to a cell: Excel turns it into a date or a",
+  "T_x20": "writing '5 March 2024' to a cell: Excel turns it into a date",
+  "T_x21": "writing '10:30' to a cell: Excel turns it into a date or a t",
+  "T_y053": "writing '1 / 2' to a cell: Excel turns it into a date or a t",
+  "T_y056": "writing 'may 5' to a cell: Excel turns it into a date or a t",
+  "T_y057": "writing '5 may' to a cell: Excel turns it into a date or a t",
+  "T_y058": "writing '12 am' to a cell: Excel turns it into a date or a t",
+  "T_y059": "writing '12:30 pm' to a cell: Excel turns it into a date or ",
+  "T_y060": "writing '1:30' to a cell: Excel turns it into a date or a ti",
+  "T_y061": "writing '25:00' to a cell: Excel turns it into a date or a t",
+  "T_y062": "writing '1:60' to a cell: Excel turns it into a date or a ti",
+  "T_y063": "writing '13:00:00' to a cell: Excel turns it into a date or ",
+  "T_y064": "writing '2024/01/05' to a cell: Excel turns it into a date o",
+  "T_y066": "writing '1-Jan' to a cell: Excel turns it into a date or a t",
+  "T_y067": "writing 'Jan-24' to a cell: Excel turns it into a date or a ",
+  "T_y085": "writing '1/2/2024 10:00' to a cell: Excel turns it into a da"
+ }
+}

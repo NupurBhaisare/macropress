@@ -14,11 +14,11 @@ ASSUMPTIONS = {
         "Selection.ClearContents while several sheets are grouped clears the range on every grouped sheet.",
     ),
     "GROUP-SELECT-ACTIVE": (
-        "unverified",
+        "verified",
         "Sheets(Array(...)).Select makes the first sheet named in the array the active sheet.",
     ),
     "GROUP-EXTEND-KEEPS-ACTIVE": (
-        "unverified",
+        "verified",
         "Sheets(...).Select Replace:=False adds sheets to the group and keeps the current active sheet.",
     ),
     "GROUP-SELECT-RANGE": (
@@ -30,17 +30,17 @@ ASSUMPTIONS = {
         "Range.AutoFilter on a sheet that already has an AutoFilter uses the existing filter range, "
         "not the range named in the code.",
     ),
-    "AF-RANGE-NOT-EXTENDED": (
-        "unverified",
-        "A re-applied AutoFilter keeps its saved range even when data continues below it (Excel may extend it).",
+    "AF-RANGE-EXTENDED": (
+        "verified",
+        "An AutoFilter that is given a criterion takes in the rows of data directly below its range.",
     ),
     "AF-HEADER-ROW": (
-        "unverified",
+        "verified",
         "Range.AutoFilter on a single row (a header row, or Rows(1)) filters the data below it: the row's current "
         "region, across the row's columns.",
     ),
     "AF-REFILTER-UNHIDES": (
-        "unverified",
+        "verified",
         "Re-applying an AutoFilter shows every row of its range that passes, including rows hidden by hand.",
     ),
     "AF-MATCH-TEXT": (
@@ -62,7 +62,7 @@ ASSUMPTIONS = {
         "verified",
         "Pasting whole copied rows replaces the whole target rows; blank source cells clear target cells.",
     ),
-    "WRITE-EMPTY-STRING": ("unverified", 'Writing "" to a cell leaves it empty.'),
+    "WRITE-EMPTY-STRING": ("verified", 'Writing "" to a cell leaves it empty.'),
     "FORMULAS-RECALCULATED": (
         "verified",
         "Formulas whose inputs changed are recalculated before their values are read and before saving "
@@ -78,7 +78,7 @@ ASSUMPTIONS = {
         "Under manual calculation a formula whose inputs changed shows its old value until Calculate, a save or a "
         "return to automatic calculation; a formula entered meanwhile is calculated once, from what cells show.",
     ),
-    "SPILL-BLANK-AS-ZERO": ("unverified", "A blank cell in a dynamic-array result (SORT, UNIQUE, ...) spills as 0."),
+    "SPILL-BLANK-AS-ZERO": ("verified", "A blank cell in a dynamic-array result (SORT, UNIQUE, ...) spills as 0."),
     "SORT-TEXT-ORDER": (
         "verified",
         "Sorting (Sort, SORT) orders numbers, then text (the empty text first), then FALSE, TRUE and errors (which "

@@ -42,6 +42,7 @@ class Sheet(VBAObject):
         self.spills = {}  # (r, c) of a dynamic-array formula -> the rectangle it fills
         self.spill_owner = {}  # (r, c) of a spilled value -> (r, c) of its formula
         self.dynamic_cm = {}  # (r, c) -> the cell's cm attribute in the file (dynamic-array metadata)
+        self.array_cells = {}  # (r, c) of an array formula entered with Ctrl+Shift+Enter -> the rectangle it fills
         self._sort = None
 
     # --- storage ---
@@ -53,7 +54,7 @@ class Sheet(VBAObject):
 
     def get_cell(self, r, c):
         if self.book.dirty:
-            self.book.refresh(self)
+            self.book.refresh_cell(self, r, c)
         row = self.rows.get(r)
         return row.get(c) if row else None
 

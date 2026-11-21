@@ -132,6 +132,12 @@ def read_workbook(path):
     book.date1904 = pr is not None and pr.get("date1904") in ("1", "true")
     if book.date1904:
         raise VBANotImplemented("a workbook on the 1904 date system (its dates would be off by four years)")
+    calc = wb.find(NS + "calcPr")
+    if calc is not None:
+        if calc.get("fullPrecision") in ("0", "false"):
+            raise VBANotImplemented("a workbook set to 'precision as displayed' (numbers are rounded as they show)")
+        book.manual = calc.get("calcMode") == "manual"
+        book.calc_on_save = calc.get("calcOnSave") not in ("0", "false")
     sheet_parts = []
     for s in wb.iter(NS + "sheet"):
         part = rels.get(s.get(REL_NS + "id"))
@@ -260,11 +266,13 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
                         mr, mc, mt = masters[si]
                         text = shift_formula(mt, r - mr, col - mc)
                 formula = text
-                if f.get("t") == "array" and c.get("cm") is not None:  # a dynamic-array formula and its spill
+                if f.get("t") == "array":
                     area = parse_area(f.get("ref") or c.get("r"))
-                    if area:
+                    if area and c.get("cm") is not None:  # a dynamic-array formula and its spill
                         sheet.spills[(r, col)] = area
                         sheet.dynamic_cm[(r, col)] = c.get("cm")
+                    elif area:  # an array formula entered with Ctrl+Shift+Enter, over one cell or several
+                        sheet.array_cells[(r, col)] = area
                 if formula is not None and value is None:  # saved without its value: calculated when it is read
                     value, uncalculated = PENDING, True
             if value is None and formula is None:
@@ -272,10 +280,10 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             cells[col] = Cell(value, formula, numfmt if numfmt != "General" else None)
         if cells:
             sheet.rows[r] = cells
-    for (ar, ac), (r1, c1, r2, c2) in sheet.spills.items():
+    for (ar, ac), (r1, c1, r2, c2) in [*sheet.spills.items(), *sheet.array_cells.items()]:
         for rr in range(r1, r2 + 1):
             for cc in range(c1, c2 + 1):
-                if (rr, cc) != (ar, ac):
+                if (rr, cc) != (ar, ac):  # its values are the formula's: unknown once the formula's are
                     sheet.spill_owner[(rr, cc)] = (ar, ac)
     cols = root.find(NS + "cols")
     for col in cols if cols is not None else []:

@@ -119,10 +119,7 @@ $ macropress press examples/invoice/invoice.xlsm \
       "examples": [{"cell": "C5", "before": 4.5, "after": 4.05}, ...]
     }
   ],
-  "unverified_behaviours": [
-    "- `FORMULAS-RECALCULATED` [unverified] x8: Formulas whose inputs changed are recalculated before their values are read ...",
-    ...
-  ],
+  "unverified_behaviours": [],
   "messages": ["InputBox: Discount on every unit price, in percent:", "MsgBox: Lower every unit price by 10%?"]
 }
 ```

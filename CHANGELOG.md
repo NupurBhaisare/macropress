@@ -37,3 +37,17 @@ Found by running some 990 small macros in both Excel and MacroPress and comparin
 - **Errors**: a member asked of a value that is no object is error 424, and of `Nothing` error 91, where the run used
   to stop with a fault of the converter. A constant MacroPress does not know (`vbSomething`) is refused, where it used
   to be read as an empty variable. A procedure that calls itself without end stops with error 28.
+- **Formulas**: numbers are compared to 15 significant digits, as Excel compares them (`=0.1+0.2=0.3` is TRUE), and a
+  formula or a `SUM` that ends on a sum which all but cancels gives 0 (`=0.1+0.2-0.3`). `INT` and `ROUND` work on the
+  15-digit number (`=INT(4.35*100)` is 435). A number written with more than 15 digits keeps the first 15. An odd root
+  of a negative number has a value (`=(-8)^(1/3)`), `0^0` and a result too large are `#NUM!`. Text in a formula's
+  arithmetic is read as Excel reads typed text (`"5%"+1`, `"1,000"+1`). `SUM`, `COUNT`, `MAX`, `MIN`, `AVERAGE`, `AND`
+  and `OR` count text and logical values written in the formula and pass over those read from cells, and an argument
+  left empty is a 0. A formula that wants one value and is given a range takes the cell in its own row or column, and
+  `INDEX` with a 0 gives a whole row or column. `WorksheetFunction.Sum`, `Max` and `Min` take values the same way.
+- **Calculation**: under manual calculation a formula keeps its value until something calculates, and one entered then
+  is calculated once from what cells show; a workbook saved in manual mode opens in it. A cell filled by an array
+  formula entered with Ctrl+Shift+Enter is no longer read with a value its formula has outgrown.
+- **Speed**: a write no longer looks at every formula in the workbook to find the ones that read the cell, so a macro
+  that writes many cells of a workbook with many formulas takes time in proportion to what it changes.
+

@@ -2,6 +2,7 @@
 
 import datetime as dt
 
+from .. import entry, formula as fx
 from ..errors import VBANotImplemented, VBARuntimeError
 from ..values import (
     EMPTY,
@@ -65,15 +66,24 @@ class WorksheetFunction(VBAObject):
         return [date_to_serial(v) if isinstance(v, dt.datetime) else v for v in values]
 
     def _numbers(self, name, args):
-        """The numbers Sum, Max and Min read: text, TRUE/FALSE and blanks are skipped, and an error among them is the
-        function's error, which VBA sees as run-time error 1004."""
+        """The numbers Sum, Max and Min read. In a range or an array, text, TRUE/FALSE and blanks are passed over. A
+        value passed on its own counts as one written in a formula does: text that reads as a number, TRUE as 1.
+        An error among them, or text that is no number, is the function's error: run-time error 1004 to VBA."""
         nums = []
         for a in args:
+            alone = not isinstance(a, (Range, VBAArray))
             for v in self._cells(a):
                 if isinstance(v, XLError):
                     raise self._fail(name)
                 if is_numeric_value(v):
                     nums.append(float(v))
+                elif alone and isinstance(v, bool):
+                    nums.append(float(v))
+                elif alone and isinstance(v, str):
+                    number = entry.value_of(v)
+                    if number is None:
+                        raise self._fail(name)
+                    nums.append(number)
         return nums
 
     def m_xlookup(self, lookup_value, lookup_array, return_array, if_not_found=None, match_mode=None, search_mode=None):
@@ -97,7 +107,10 @@ class WorksheetFunction(VBAObject):
         raise self._fail("XLookup")
 
     def m_sum(self, *args):
-        return float(sum(self._numbers("Sum", args)))
+        try:
+            return fx.total(self._numbers("Sum", args))
+        except fx._Err:
+            raise self._fail("Sum") from None
 
     def m_max(self, *args):
         nums = self._numbers("Max", args)

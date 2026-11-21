@@ -12,8 +12,9 @@ import re
 import unicodedata
 from decimal import ROUND_HALF_UP, Decimal
 
+from . import entry
 from .errors import VBANotImplemented
-from .values import XLError, date_to_serial, format_double
+from .values import XLError, date_to_serial, format_double, typed_number
 
 MAX_ROW, MAX_COL = 1048576, 16384
 
@@ -155,7 +156,10 @@ class Parser:
     def primary(self):
         kind, val = self.take()
         if kind == "num":
-            return ("num", float(val))
+            number = typed_number(val)
+            if number is None:
+                raise VBANotImplemented(f"the number {val} in ={self.text}: too large for Excel")
+            return ("num", number)
         if kind == "str":
             return ("str", val[1:-1].replace('""', '"'))
         if kind == "err":
@@ -186,7 +190,7 @@ class Parser:
             node = self.expr(0)
             if self.take() != ("op", ")"):
                 raise VBANotImplemented(f"formula syntax in ={self.text}")
-            return node
+            return ("paren", node)
         raise VBANotImplemented(f"formula syntax near {val!r} in ={self.text}")
 
 
@@ -204,7 +208,7 @@ def function_names(node, out=None):
     elif node[0] == "bin":
         function_names(node[2], out)
         function_names(node[3], out)
-    elif node[0] in ("neg", "pct"):
+    elif node[0] in ("neg", "pct", "paren"):
         function_names(node[1], out)
     return out
 
@@ -220,7 +224,7 @@ def references(node, out=None):
     elif node[0] == "bin":
         references(node[2], out)
         references(node[3], out)
-    elif node[0] in ("neg", "pct"):
+    elif node[0] in ("neg", "pct", "paren"):
         references(node[1], out)
     return out
 
@@ -232,11 +236,13 @@ def references(node, out=None):
 
 class Array:
     """A 2-D block of values: a range read, or a dynamic-array result. A range read holds the cells up to the sheet's
-    last data only; `extent` is the size of the range itself, and its cells past the data are blank."""
+    last data only; `extent` is the size of the range itself, and its cells past the data are blank. `rect` is where
+    a range read lies, (sheet, r1, c1, r2, c2): what a formula that is not a dynamic array takes one cell of."""
 
-    def __init__(self, rows, extent=None):
+    def __init__(self, rows, extent=None, rect=None):
         self.rows = rows
         self.extent = extent or self.shape
+        self.rect = rect
 
     @property
     def shape(self):
@@ -268,11 +274,48 @@ def num(v):
     if isinstance(v, dt.datetime):
         return date_to_serial(v)
     if isinstance(v, str):
-        try:
-            return float(v.strip())
-        except ValueError:
-            raise _Err(XLError("#VALUE!")) from None
+        number = entry.value_of(v)  # text is read as it would be typed in a cell: "5%", "1,000", "(5)", "1 1/2"
+        if number is not None:
+            return number
     raise _Err(XLError("#VALUE!"))
+
+
+def fifteen(x):
+    """A number as Excel compares and rounds it: to 15 significant digits."""
+    return float(f"{x:.14e}")
+
+
+def finite(x):
+    """A result of arithmetic: one too large for a number is #NUM!."""
+    if not math.isfinite(x):
+        raise _Err(XLError("#NUM!"))
+    return x
+
+
+def snap_add(a, b):
+    """a + b as Excel gives it where a formula or SUM ends on it: 0 when the two all but cancel, leaving 50 or more
+    binary places below the larger of them (0.1+0.2-0.3 is 0, not 5.55E-17)."""
+    r = a + b
+    if r and math.frexp(max(abs(a), abs(b)))[1] - math.frexp(r)[1] >= 50:
+        return 0.0
+    return r
+
+
+def power(x, y):
+    """x^y. A negative number has a root when the root is odd ((-8)^(1/3) is -2), and no other fractional power."""
+    if x == 0:
+        if y > 0:
+            return 0.0
+        raise _Err(XLError("#NUM!" if y == 0 else "#DIV/0!"))
+    try:
+        if x < 0 and y != int(y):
+            root = fifteen(1 / y)
+            if root != int(root) or not int(root) % 2:
+                raise _Err(XLError("#NUM!"))
+            return finite(-(abs(x) ** y))
+        return finite(x**y)
+    except OverflowError:
+        raise _Err(XLError("#NUM!")) from None
 
 
 def text(v):
@@ -313,6 +356,8 @@ class _Err(Exception):
 
 def type_rank(v):
     """Excel's order: numbers, text, logical values, errors; blanks are handled apart."""
+    if isinstance(v, XLError):
+        return 3
     if isinstance(v, bool):
         return 2
     if isinstance(v, (int, float)):
@@ -357,8 +402,9 @@ def sort_value_key(v):
     return (rank, str(v))
 
 
-def compare(a, b):
-    """Excel's comparison: -1/0/1. Blank meets a number as 0 and text as ''; types never convert."""
+def compare(a, b, exact=False):
+    """Excel's comparison: -1/0/1. Blank meets a number as 0 and text as ''; types never convert. Numbers are
+    compared to 15 significant digits (0.1+0.2=0.3 is TRUE), unless exact: a lookup's match is on the full number."""
     a, b = scalar(a), scalar(b)
     for v in (a, b):
         if isinstance(v, XLError):
@@ -374,8 +420,10 @@ def compare(a, b):
         return -1 if ra < rb else 1
     if ra == 1:
         x, y = text_order_key(a), text_order_key(b)
+    elif ra == 0:
+        x, y = (float(a), float(b)) if exact else (fifteen(a), fifteen(b))
     else:
-        x, y = (float(a), float(b)) if ra == 0 else (a, b)
+        x, y = a, b
     return (x > y) - (x < y)
 
 
@@ -429,6 +477,9 @@ class Evaluator:
 
     def run(self, node):
         try:
+            if node[0] == "bin" and node[1] in ("+", "-"):  # the formula ends on a sum: see snap_add
+                x, y = num(self.ev(node[2])), num(self.ev(node[3]))
+                return finite(snap_add(x, y if node[1] == "+" else -y))
             return self.ev(node)
         except _Err as e:
             return e.err
@@ -464,10 +515,10 @@ class Evaluator:
         extent = (r2 - r1 + 1, c2 - c1 + 1)
         b = sheet.used_bounds()
         if b is None:
-            return Array([[None]], extent)
+            return Array([[None]], extent, rect)
         r2 = min(r2, max(b[2], r1))
         c2 = min(c2, max(b[3], c1))
-        return Array([[self.read(sheet, r, c) for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)], extent)
+        return Array([[self.read(sheet, r, c) for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)], extent, rect)
 
     def ev(self, node):
         kind = node[0]
@@ -485,6 +536,8 @@ class Evaluator:
             if (r1, c1) == (r2, c2):
                 return self.read(sheet, r1, c1)
             return self.range_values(rect)
+        if kind == "paren":
+            return self.ev(node[1])
         if kind == "neg":
             return -num(self.ev(node[1]))
         if kind == "pct":
@@ -499,17 +552,17 @@ class Evaluator:
                 return {"=": c == 0, "<>": c != 0, "<": c < 0, ">": c > 0, "<=": c <= 0, ">=": c >= 0}[op]
             x, y = num(a), num(b)
             if op == "+":
-                return x + y
+                return finite(x + y)
             if op == "-":
-                return x - y
+                return finite(x - y)
             if op == "*":
-                return x * y
+                return finite(x * y)
             if op == "/":
                 if y == 0:
                     raise _Err(XLError("#DIV/0!"))
-                return x / y
+                return finite(x / y)
             if op == "^":
-                return x**y
+                return power(x, y)
         if kind == "func":
             fn = FUNCTIONS.get(node[1])
             if fn is None:
@@ -546,45 +599,97 @@ def _flat(ev, args):
     return out
 
 
+# Functions that hand back the cells they pick: what they return is read as cells are, not as a value written out.
+_PICKS_CELLS = ("INDEX", "XLOOKUP", "IF", "IFERROR")
+
+
+def _operands(ev, args, name):
+    """What SUM, COUNT, AND and the like are given, as (value, written): written is True for a value written or
+    worked out in the formula itself (SUM("5",TRUE) is 6), False for one read from cells or an array, where these
+    functions pass over text and logical values, and None where a function picked it and either could be so."""
+    out = []
+    for a in args:
+        if a[0] == "missing":  # SUM(1,,2): an argument left empty is a 0 written there, FALSE to AND and OR
+            out.append((0.0, True))
+            continue
+        try:
+            v = ev.ev(a)
+        except _Err as e:
+            v = e.err
+        if isinstance(v, Array):
+            out += [(x, False) for row in v.rows for x in row]
+            continue
+        while a[0] == "paren":
+            a = a[1]
+        cells = True if a[0] in ("ref", "name") else None if a[0] == "func" and a[1] in _PICKS_CELLS else False
+        out.append((v, None if cells is None else not cells))
+    return out
+
+
+def _unsure(name, v):
+    return VBANotImplemented(f"{name} of {v!r} from a function that may have read it from a cell")
+
+
+def _numbers(ev, args, name, counting=False):
+    """The numbers among a function's operands. Text written in the formula counts if it reads as a number and is
+    #VALUE! if not; logical values written there count as 1 and 0. COUNT passes over errors and text it cannot read."""
+    out = []
+    for v, written in _operands(ev, args, name):
+        if isinstance(v, XLError):
+            if not counting:
+                raise _Err(v)
+        elif isinstance(v, (bool, str)):
+            if written is None:
+                raise _unsure(name, v)
+            if not written:
+                continue
+            n = float(v) if isinstance(v, bool) else entry.value_of(v)
+            if n is not None:
+                out.append(n)
+            elif not counting:
+                raise _Err(XLError("#VALUE!"))
+        elif isinstance(v, (int, float)):
+            out.append(float(v))
+    return out
+
+
+def total(numbers):
+    """The numbers added up as SUM adds them: in order, the last addition as snap_add has it."""
+    if not numbers:
+        return 0.0
+    total = 0.0
+    for n in numbers[:-1]:
+        total += n
+    return finite(snap_add(total, numbers[-1]))
+
+
 def f_sum(ev, args):
-    vals = _flat(ev, args)
-    for v in vals:
-        if isinstance(v, XLError):
-            raise _Err(v)
-    return float(sum(float(v) for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)))
-
-
-def _numbers(ev, args):
-    vals = _flat(ev, args)
-    for v in vals:
-        if isinstance(v, XLError):
-            raise _Err(v)
-    return [float(v) for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return total(_numbers(ev, args, "SUM"))
 
 
 def f_min(ev, args):
-    n = _numbers(ev, args)
+    n = _numbers(ev, args, "MIN")
     return min(n) if n else 0.0
 
 
 def f_max(ev, args):
-    n = _numbers(ev, args)
+    n = _numbers(ev, args, "MAX")
     return max(n) if n else 0.0
 
 
 def f_count(ev, args):
-    return float(len(_numbers(ev, args)))
+    return float(len(_numbers(ev, args, "COUNT", counting=True)))
 
 
 def f_counta(ev, args):
-    return float(sum(1 for v in _flat(ev, args) if v is not None))
+    return float(sum(1 for v, _ in _operands(ev, args, "COUNTA") if v is not None))
 
 
 def f_average(ev, args):
-    n = _numbers(ev, args)
+    n = _numbers(ev, args, "AVERAGE")
     if not n:
         raise _Err(XLError("#DIV/0!"))
-    return sum(n) / len(n)
+    return total(n) / len(n)
 
 
 def f_if(ev, args):
@@ -604,12 +709,32 @@ def f_iferror(ev, args):
     return v
 
 
+def _logicals(ev, args, name):
+    """The logical values among AND's or OR's operands: numbers count (0 is FALSE), and so does "TRUE" or "FALSE"
+    written in the formula; other text and blank cells are passed over. With none at all the result is #VALUE!."""
+    out = []
+    for v, written in _operands(ev, args, name):
+        if isinstance(v, XLError):
+            raise _Err(v)
+        if isinstance(v, str):
+            if v.upper() not in ("TRUE", "FALSE") or written is False:
+                continue
+            if written is None:
+                raise _unsure(name, v)
+            out.append(v.upper() == "TRUE")
+        elif v is not None:
+            out.append(bool(v))
+    if not out:
+        raise _Err(XLError("#VALUE!"))
+    return out
+
+
 def f_and(ev, args):
-    return all(truth(v) for v in _flat(ev, args) if v is not None)
+    return all(_logicals(ev, args, "AND"))
 
 
 def f_or(ev, args):
-    return any(truth(v) for v in _flat(ev, args) if v is not None)
+    return any(_logicals(ev, args, "OR"))
 
 
 def f_not(ev, args):
@@ -660,7 +785,7 @@ def f_lower(ev, args):
 
 
 def f_round(ev, args):
-    return round_half_up(num(ev.ev(args[0])), int(num(ev.arg(args, 1, 0.0))))
+    return round_half_up(fifteen(num(ev.ev(args[0]))), int(num(ev.arg(args, 1, 0.0))))
 
 
 def f_abs(ev, args):
@@ -668,7 +793,7 @@ def f_abs(ev, args):
 
 
 def f_int(ev, args):
-    return float(math.floor(num(ev.ev(args[0]))))
+    return float(math.floor(fifteen(num(ev.ev(args[0])))))  # INT(4.35*100) is 435, though the product falls short
 
 
 def f_isblank(ev, args):
@@ -696,7 +821,7 @@ def f_today(ev, args):
 
 def _match_index(values, key):
     for i, v in enumerate(values):
-        if v is not None and not isinstance(v, XLError) and compare(v, key) == 0:  # an error cell never matches
+        if v is not None and not isinstance(v, XLError) and compare(v, key, exact=True) == 0:  # no error matches
             return i
     return None
 
@@ -748,16 +873,32 @@ def f_xlookup(ev, args):
 
 
 def f_index(ev, args):
+    """INDEX(array, row, column). One number picks along a single row or column, and is #REF! for a block of both;
+    0 for the row or the column takes all of them: a whole column or row of the array, still the cells it was."""
     arr = ev.array(ev.ev(args[0]))
-    r = int(num(ev.arg(args, 1, 0.0)))
-    c = int(num(ev.arg(args, 2, 0.0)))
     rows, cols = arr.extent
-    if rows == 1 and c == 0:
+    r = int(num(ev.arg(args, 1, 0.0, blank=0.0)))
+    if len(args) > 2:
+        c = int(num(ev.arg(args, 2, 0.0, blank=0.0)))
+    elif rows == 1:
         r, c = 1, r
-    c = c or 1
-    if not (1 <= r <= rows and 1 <= c <= cols):
+    elif cols == 1 or r == 0:
+        c = 1 if cols == 1 else 0
+    else:
         raise _Err(XLError("#REF!"))
-    return arr.cell(r - 1, c - 1)
+    if r < 0 or c < 0:
+        raise _Err(XLError("#VALUE!"))
+    if r > rows or c > cols:
+        raise _Err(XLError("#REF!"))
+    if r and c:
+        return arr.cell(r - 1, c - 1)
+    r1, r2 = (r - 1, r - 1) if r else (0, rows - 1)
+    c1, c2 = (c - 1, c - 1) if c else (0, cols - 1)
+    if (r1, c1) == (r2, c2):
+        return arr.cell(r1, c1)
+    rect = arr.rect and (arr.rect[0], arr.rect[1] + r1, arr.rect[2] + c1, arr.rect[1] + r2, arr.rect[2] + c2)
+    held = range(r1, min(r2, len(arr.rows) - 1) + 1)  # a range read holds its rows down to the sheet's last data
+    return Array([[arr.cell(i, j) for j in range(c1, c2 + 1)] for i in held], (r2 - r1 + 1, c2 - c1 + 1), rect)
 
 
 def f_unique(ev, args):

@@ -185,6 +185,28 @@ def test_a_formulas_saved_value_stands_until_a_cell_it_reads_changes(tmp_path):
         _press(path, tmp_path / "out2.xlsx", 'Range("A1").Value = 5\nx = Range("B1").Value')
 
 
+def test_calculation_follows_what_the_workbook_file_says(tmp_path):
+    manual = PARTS["xl/workbook.xml"].replace("</workbook>", '<calcPr calcMode="manual"/></workbook>')
+    path = _workbook(tmp_path / "in.xlsx", {**PARTS, "xl/workbook.xml": manual})
+    ctx = runtime.Context(str(path))
+    # saved with manual calculation: B1 keeps its value when A1 changes, and is calculated as the copy is saved
+    assert _run(ctx, 'Range("A1").Value = 5\nDebug.Print Range("B1").Value') == ["2"]
+    ctx.save(str(tmp_path / "out.xlsx"))
+    assert _value(read_workbook(str(tmp_path / "out.xlsx")).find_sheet("Data"), 1, 2) == 10.0
+    never = manual.replace('calcMode="manual"', 'calcMode="manual" calcOnSave="0"')
+    path = _workbook(tmp_path / "in2.xlsx", {**PARTS, "xl/workbook.xml": never})
+    assert _value(_press(path, tmp_path / "out2.xlsx", 'Range("A1").Value = 5'), 1, 2) == 2.0
+    # an array formula entered over B1:B2: what B2 shows is the formula's doing, and unknown once A2 changes
+    cells = (
+        '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f t="array" ref="B1:B2">A1:A2</f><v>1</v></c></row>'
+        '<row r="2"><c r="A2"><v>2</v></c><c r="B2"><v>2</v></c></row>'
+    )
+    path = _workbook(tmp_path / "in3.xlsx", {**PARTS, "xl/worksheets/sheet1.xml": _sheet(cells)})
+    assert _run(runtime.Context(str(path)), 'Debug.Print Range("B2").Value') == ["2"]
+    with pytest.raises(VBANotImplemented, match="could not be calculated"):
+        _run(runtime.Context(str(path)), 'Range("A2").Value = 5\nx = Range("B2").Value')
+
+
 STYLES = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'

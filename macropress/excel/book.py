@@ -45,6 +45,55 @@ class FormulaInfo:
         self.ast, self.precedents, self.error, self.volatile = None, None, None, False
 
 
+class Readers:
+    """The formulas that read cells of one sheet, kept so that the ones a change reaches are found without passing
+    the rest. A reference of a few rows is filed under each of its rows; a taller one of a few columns under each of
+    its columns; one both tall and wide apart. Only formulas whose values are current are kept here: one already
+    waiting to be calculated has no further to go."""
+
+    SPAN = 32
+
+    def __init__(self):
+        self.by_row, self.by_col, self.wide = {}, {}, set()
+
+    def _places(self, r1, c1, r2, c2):
+        if r2 - r1 < self.SPAN:
+            return self.by_row, range(r1, r2 + 1)
+        if c2 - c1 < self.SPAN:
+            return self.by_col, range(c1, c2 + 1)
+        return None, ()
+
+    def add(self, key, rect):
+        index, places = self._places(*rect)
+        if index is None:
+            self.wide.add(key)
+        for i in places:
+            index.setdefault(i, set()).add(key)
+
+    def remove(self, key, rect):
+        index, places = self._places(*rect)
+        self.wide.discard(key)
+        for i in places:
+            keys = index.get(i)
+            if keys is not None:
+                keys.discard(key)
+                if not keys:
+                    del index[i]
+
+    def near(self, r1, c1, r2, c2):
+        """The formulas that may read a cell of the rectangle: every one that does, and some that do not."""
+        found = set(self.wide)
+        for index, lo, hi in ((self.by_row, r1, r2), (self.by_col, c1, c2)):
+            if hi - lo < len(index):
+                for i in range(lo, hi + 1):
+                    found.update(index.get(i, ()))
+            else:
+                for i, keys in index.items():
+                    if lo <= i <= hi:
+                        found.update(keys)
+        return found
+
+
 class Book(VBAObject):
     vba_type_name = "Workbook"
 
@@ -54,15 +103,20 @@ class Book(VBAObject):
         self.names = {}  # lower name -> list of (scope sheet name or None, refers_to)
         self.tables = {}  # lower name -> Table
         self.date1904 = False
+        self.manual = False  # the calculation mode the file was saved in
+        self.calc_on_save = True
         self.active = None
         self.selected = []
         self.app = None
         self.now = None  # Now() for NOW()/TODAY() in formulas
         self.formula_index = None  # (sheet, r, c) -> FormulaInfo, built when first needed
-        self.dirty = set()  # formulas whose inputs changed since they were last calculated
+        self.dirty = set()  # formulas to calculate before their values are read: their inputs changed
+        self.stale = set()  # formulas whose inputs changed under manual calculation: they show their old values
+        self._dirty_on, self._dirty_spills = {}, {}  # sheet -> its dirty formulas; its dirty dynamic arrays
         self._by_sheet, self._readers, self._always = {}, {}, set()
         self._evaluating = set()
         self._spill_writer = None
+        self._calculating = False
 
     @classmethod
     def blank(cls, sheet_names=("Sheet1",)):
@@ -91,6 +145,8 @@ class Book(VBAObject):
         self._unregister(key)
         info = FormulaInfo(sheet, r, c, text, dynamic)
         try:
+            if (r, c) in sheet.array_cells and sheet.array_cells[(r, c)] != (r, c, r, c):
+                raise VBANotImplemented("an array formula entered over several cells")
             info.ast = fx.parse(text)
             info.precedents = self._precedents(sheet, fx.references(info.ast))
             info.volatile = bool(VOLATILE & fx.function_names(info.ast))
@@ -98,12 +154,10 @@ class Book(VBAObject):
             info.error, info.precedents = str(err), self._named_precedents(sheet, text)
         self.formula_index[key] = info
         self._by_sheet.setdefault(sheet, set()).add(key)
-        if info.precedents is None or info.volatile:
-            self._always.add(key)  # reads cells we cannot name, or recalculates on every change
-        for p in info.precedents or ():
-            self._readers.setdefault(p[0], {}).setdefault(key, []).append(p[1:])
         if dirty:
-            self.dirty.add(key)
+            self._mark(key)
+        if key not in self.dirty and key not in self.stale:
+            self._watch(key)
         return info
 
     def _precedents(self, sheet, nodes):
@@ -131,20 +185,51 @@ class Book(VBAObject):
         except VBANotImplemented:
             return None
 
-    def _unregister(self, key):
-        info = self.formula_index.pop(key, None)
-        if info is None:
-            return
-        self._by_sheet.get(key[0], set()).discard(key)
+    def _watch(self, key):
+        """The formula's value is current: from now on a change to a cell it reads makes it stale."""
+        info = self.formula_index[key]
+        if info.precedents is None or info.volatile:
+            self._always.add(key)  # reads cells we cannot name, or recalculates on every change
+        for p in info.precedents or ():
+            self._readers.setdefault(p[0], Readers()).add(key, p[1:])
+
+    def _unwatch(self, key):
+        info = self.formula_index[key]
         self._always.discard(key)
         for p in info.precedents or ():
-            self._readers.get(p[0], {}).pop(key, None)
+            if p[0] in self._readers:
+                self._readers[p[0]].remove(key, p[1:])
+
+    def _mark(self, key):
+        self.dirty.add(key)
+        self._dirty_on.setdefault(key[0], set()).add(key)
+        if self.formula_index[key].dynamic:
+            self._dirty_spills.setdefault(key[0], set()).add(key)
+
+    def _unmark(self, key):
+        self.dirty.discard(key)
+        self.stale.discard(key)
+        for index in (self._dirty_on, self._dirty_spills):
+            if key[0] in index:
+                index[key[0]].discard(key)
+
+    def _unregister(self, key):
+        if key not in self.formula_index:
+            return
+        self._unwatch(key)
+        del self.formula_index[key]
+        self._by_sheet.get(key[0], set()).discard(key)
+
+    def _manual(self):
+        return self.app is not None and self.app.settings.get("calculation") == -4135
 
     def register_formula(self, sheet, r, c, text, dynamic):
         self._formulas()
         info = self._register(sheet, r, c, text, dynamic, dirty=True)
         if info.error and self.app is not None:
             self.app.note("FORMULA-NOT-EVALUATED", f"{sheet.name}!{col_letters(c)}{r}: {info.error}")
+        if self._manual():
+            self.evaluate((sheet, r, c))  # entered under manual calculation: calculated once, from what cells show
 
     def forget_formulas(self, sheet, r1, c1, r2, c2):
         """Formulas in the rectangle are being overwritten or cleared; a spill goes with its formula."""
@@ -153,13 +238,14 @@ class Book(VBAObject):
         keys = self._by_sheet.get(sheet)
         if not keys:
             return
-        if (r1, c1) == (r2, c2):
-            found = [(sheet, r1, c1)] if (sheet, r1, c1) in keys else []
+        if (r2 - r1 + 1) * (c2 - c1 + 1) <= len(keys):
+            found = [(sheet, r, c) for r in range(r1, r2 + 1) for c in range(c1, c2 + 1) if (sheet, r, c) in keys]
         else:
             found = [k for k in keys if r1 <= k[1] <= r2 and c1 <= k[2] <= c2]
         for key in found:
+            self._unmark(key)
             self._unregister(key)
-            self.dirty.discard(key)
+            sheet.array_cells.pop((key[1], key[2]), None)
             spill = sheet.spills.pop((key[1], key[2]), None)
             if spill:
                 self._drop_spill(sheet, (key[1], key[2]))
@@ -177,54 +263,86 @@ class Book(VBAObject):
     def cells_changed(self, sheet, r1, c1, r2, c2):
         """Cells of `sheet` in the rectangle changed: the formulas that read them (and so on) are now stale."""
         if self._spill_writer is None and sheet.spill_owner:
-            for cell in [k for k in sheet.spill_owner if r1 <= k[0] <= r2 and c1 <= k[1] <= c2]:
-                anchor = sheet.spill_owner.pop(cell)  # written over: the formula must spill again (#SPILL!)
-                self._stale((sheet,) + anchor)
+            owned = sheet.spill_owner
+            if (r2 - r1 + 1) * (c2 - c1 + 1) <= len(owned):
+                cells = [(r, c) for r in range(r1, r2 + 1) for c in range(c1, c2 + 1) if (r, c) in owned]
+            else:
+                cells = [k for k in owned if r1 <= k[0] <= r2 and c1 <= k[1] <= c2]
+            for cell in cells:
+                anchor = owned.pop(cell)  # written over: the formula must spill again (#SPILL!)
+                if (sheet,) + anchor in self.formula_index:
+                    self._stale((sheet,) + anchor)
         if not self._formulas():
             return
         todo = [(sheet, r1, c1, r2, c2)]
         while todo:
             s, a1, b1, a2, b2 = todo.pop()
-            hits = [k for k in self._always if k not in self.dirty]
-            for key, rects in self._readers.get(s, {}).items():
-                if (
-                    key not in self.dirty
-                    and key != self._spill_writer
-                    and any(not (p[2] < a1 or p[0] > a2 or p[3] < b1 or p[1] > b2) for p in rects)
-                ):
-                    hits.append(key)
+            hits = list(self._always)
+            if s in self._readers:
+                for key in self._readers[s].near(a1, b1, a2, b2):
+                    if any(
+                        p[0] is s and not (p[3] < a1 or p[1] > a2 or p[4] < b1 or p[2] > b2)
+                        for p in self.formula_index[key].precedents
+                    ):
+                        hits.append(key)
             for key in hits:
-                if key not in self.dirty:
+                if key != self._spill_writer and key not in self.dirty and key not in self.stale:
                     todo.append(self._stale(key))
 
     def _stale(self, key):
-        self.dirty.add(key)
+        """A formula's inputs changed. It is calculated when next read; under manual calculation it goes on showing
+        the value it has until the next calculation. Returns the cells its own value fills."""
         s, r, c = key
+        self._unwatch(key)
+        cell = s.rows.get(r, {}).get(c)
+        if self._manual() and not self._calculating and cell is not None and cell.value is not PENDING:
+            self.stale.add(key)
+            self.app.note("CALC-MANUAL")
+        else:
+            self._mark(key)
         return (s,) + (s.spills.get((r, c)) or (r, c, r, c))
 
     def refresh(self, sheet, spills_only=False):
         """Before cells of `sheet` are read: calculate its stale formulas (what Excel shows by then). With spills_only,
         only its stale dynamic arrays: their spills are what decides which cells the sheet uses."""
-        manual = self.app is not None and self.app.settings.get("calculation") == -4135
-        for key in [k for k in self.dirty if k[0] is sheet and k not in self._evaluating]:
-            if spills_only and not self.formula_index[key].dynamic:
-                continue
-            if (
-                manual
-                and sheet.rows.get(key[1], {}).get(key[2]) is not None
-                and sheet.rows[key[1]][key[2]].value is not PENDING
-            ):
-                self.app.note("CALC-MANUAL")  # manual calculation: Excel shows the old value
-                continue
+        for key in list((self._dirty_spills if spills_only else self._dirty_on).get(sheet, ())):
+            if key not in self._evaluating:
+                self.evaluate(key)
+
+    def refresh_cell(self, sheet, r, c):
+        """Before one cell is read: calculate its formula if stale, or the stale array formula whose value it shows,
+        and any stale dynamic array that may fill it."""
+        key = (sheet, *sheet.spill_owner.get((r, c), (r, c)))
+        if key in self.dirty and key not in self._evaluating:
             self.evaluate(key)
+        for key in list(self._dirty_spills.get(sheet, ())):
+            if key[1] <= r and key[2] <= c and key not in self._evaluating:
+                self.evaluate(key)
 
     def recalc_all(self):
+        """Calculate every formula whose inputs changed: Calculate, a save, or leaving manual calculation."""
+        for key in list(self.stale):
+            self._mark(key)
+        self.stale.clear()
         budget = 20 * len(self.formula_index or ()) + 1000
-        while self.dirty:
-            budget -= 1
-            if budget < 0:
-                raise VBANotImplemented("formulas that keep changing each other (a circular reference)")
-            self.evaluate(next(iter(self.dirty)))
+        self._calculating = True
+        try:
+            while self.dirty:
+                budget -= 1
+                if budget < 0:
+                    raise VBANotImplemented("formulas that keep changing each other (a circular reference)")
+                self.evaluate(next(iter(self.dirty)))
+        finally:
+            self._calculating = False
+
+    def recalc_range(self, sheet, r1, c1, r2, c2):
+        """Range.Calculate: the rectangle's formulas are calculated from what the cells they read show now."""
+        self._formulas()
+        for key in [k for k in self._by_sheet.get(sheet, ()) if r1 <= k[1] <= r2 and c1 <= k[2] <= c2]:
+            self._unwatch(key)
+            self.stale.discard(key)
+            self._mark(key)
+            self.evaluate(key)
 
     def evaluate(self, key):
         if key not in self.dirty:
@@ -245,15 +363,16 @@ class Book(VBAObject):
                         self.app.note("FORMULA-NOT-EVALUATED", f"{key[0].name}!{col_letters(key[2])}{key[1]}: {err}")
         finally:
             self._evaluating.discard(key)
-        self.dirty.discard(key)
+        self._unmark(key)
         self._store(key, info, result)
+        if key in self.formula_index and key not in self.dirty:
+            self._watch(key)
 
     def _read_for_formula(self, sheet, r, c):
         if (sheet, r, c) in self._evaluating:
             raise VBANotImplemented(f"a circular reference through {sheet.name}!{col_letters(c)}{r}")
-        for key in [k for k in self.dirty if k[0] is sheet and k not in self._evaluating]:
-            if (key[1], key[2]) == (r, c) or (self.formula_index[key].dynamic and r >= key[1] and c >= key[2]):
-                self.evaluate(key)
+        if self.dirty:
+            self.refresh_cell(sheet, r, c)
         cell = sheet.rows.get(r, {}).get(c)
         if cell is None:
             return None
@@ -269,18 +388,34 @@ class Book(VBAObject):
         sheet.changed = True
         if self.app is not None:
             self.app.note("FORMULAS-RECALCULATED")
+        old = cell.value
         if result is PENDING:
             cell.value = PENDING
             for k, a in sheet.spill_owner.items():  # its old spilled values are unknown too
                 if a == (r, c):
                     sheet.rows[k[0]][k[1]].value = PENDING
+        elif isinstance(result, fx.Array) and info.dynamic:
+            self._spill(key, cell, result)
             return
-        if isinstance(result, fx.Array):
-            if info.dynamic:
-                self._spill(key, cell, result)
-                return
-            result = result.rows[0][0] if result.rows and result.rows[0] else None
-        cell.value = _cell_result(result)
+        else:
+            cell.value = _cell_result(self._one_value(sheet, r, c, result))
+        if cell.value is not old and not (cell.value == old and type(cell.value) is type(old)):
+            self.cells_changed(sheet, r, c, r, c)  # a formula that read the old value, entered while it was stale
+
+    def _one_value(self, sheet, r, c, result):
+        """What a formula that is not a dynamic array shows of a result of several cells: of a range, the cell in the
+        formula's own row or column (#VALUE! when the range passes it by); of an array, the first value. An array
+        formula entered the old way, with Ctrl+Shift+Enter, shows the first value of either."""
+        if not isinstance(result, fx.Array):
+            return result
+        if result.rect is not None and (r, c) not in sheet.array_cells:
+            _, r1, c1, r2, c2 = result.rect
+            if c1 == c2 and r1 <= r <= r2:
+                return result.cell(r - r1, 0)
+            if r1 == r2 and c1 <= c <= c2:
+                return result.cell(0, c - c1)
+            return XLError("#VALUE!")
+        return result.rows[0][0] if result.rows and result.rows[0] else None
 
     def _spill(self, key, cell, arr):
         """A dynamic-array result fills the cells below and to the right, or shows #SPILL! if one is in use."""

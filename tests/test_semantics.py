@@ -340,7 +340,134 @@ class Procedures(Runner):
         self.assertEqual((s2.rows[1][1].value, s2.rows[1][2].value, s1.rows), ("S2", "by code name", {}))
 
 
+# What Excel for Mac 16 shows for each formula, on a sheet with 5, "x", TRUE, a blank and 10 in D1:D5, 0.3 in Z1 and
+# Z3, and =0.1+0.2 in Z2: the type and text VBA reads from the cell.
+EXCEL_SHOWS = """
+=0.1+0.2=0.3 | Boolean:True
+=0.1+0.2>0.3 | Boolean:False
+=1+2^-48=1 | Boolean:True
+=1+2^-47=1 | Boolean:False
+=4.1-4=0.1 | Boolean:False
+=1E+15+1=1E+15 | Boolean:True
+=1E-20=0 | Boolean:False
+=IF(Z2=Z3,1,0) | Double:1
+=MATCH(0.1+0.2,Z1:Z1,0) | Error:Error 2042
+=0.1+0.2-0.3 | Double:0
+=(0.1+0.2-0.3) | Double:5.55111512312578E-17
+=Z2-Z3 | Double:0
+=(Z2-Z3) | Double:5.55111512312578E-17
+=(1+2^-49)-1 | Double:1.77635683940025E-15
+=(1+2^-50)-1 | Double:0
+=1-(1-2^-50) | Double:0
+=5.1-5.05-0.05 | Double:-1.80411241501588E-16
+=SUM(0.1,0.2,-0.3) | Double:0
+=SUM(0.1,0.2,-0.3,0) | Double:5.55111512312578E-17
+=SUM(5.1,-5.05,-0.05) | Double:-1.80411241501588E-16
+=AVERAGE(0.1,0.2,-0.3) | Double:0
+=INT(4.35*100) | Double:435
+=INT(1-2^-50) | Double:0
+=ROUND(2.5-2^-51,0) | Double:3
+=ROUND(1.005,2) | Double:1.01
+=ROUND(-2.5,0) | Double:-3
+=2.9999999999999996 | Double:2.99999999999999
+=123456789012345678 | Double:1.23456789012345E+17
+=(-8)^(1/3) | Double:-2
+=(-8)^(-1/3) | Double:-0.5
+=(-8)^0.5 | Error:Error 2036
+=(-8)^(2/3) | Error:Error 2036
+=0^0 | Error:Error 2036
+=0^-1 | Error:Error 2007
+=2^1024 | Error:Error 2036
+=10^308*10 | Error:Error 2036
+=5/0+1 | Error:Error 2007
+=SUM("5",TRUE) | Double:6
+=SUM("a",1) | Error:Error 2015
+=COUNT("5",TRUE,"a") | Double:2
+=MAX("5",3) | Double:5
+=MIN(TRUE,3) | Double:1
+=AVERAGE("5",TRUE) | Double:3
+=SUM(D1:D5,"3") | Double:18
+=COUNT(D1:D5,"7",TRUE) | Double:4
+=SUM(D3,1) | Double:1
+=SUM((D2),1) | Double:1
+=AVERAGE(D2:D4) | Error:Error 2007
+=COUNTA(D4,"") | Double:1
+=SUM(1,,2) | Double:3
+=COUNT(1,,2) | Double:3
+=MAX(-1,) | Double:0
+=AND("x",1) | Boolean:True
+=AND("x") | Error:Error 2015
+=AND("FALSE",1) | Boolean:False
+=AND(D1:D5) | Boolean:True
+=AND(D4,TRUE) | Boolean:True
+=AND(TRUE,) | Boolean:False
+=OR(D4) | Error:Error 2015
+=IF("x",1,2) | Error:Error 2015
+=NOT("TRUE") | Boolean:False
+="5%"+1 | Double:1.05
+="1,000"+1 | Double:1001
+="(5)"+1 | Double:-4
+="1 1/2"+1 | Double:2.5
+="5-"+1 | Error:Error 2015
+="TRUE"+1 | Error:Error 2015
+="inf"+1 | Error:Error 2015
+=""+1 | Error:Error 2015
+=1&2=12 | Boolean:False
+"""
+
+
 class ExcelModel(Runner):
+    def test_formulas_give_what_excel_gives(self):
+        shows = dict(line.split(" | ") for line in EXCEL_SHOWS.strip().splitlines())
+        lines = [
+            'Range("D1").Value = 5\nRange("D2").Value = "x"\nRange("D3").Value = True\nRange("D5").Value = 10',
+            'Range("Z1").Value = 0.3\nRange("Z2").Formula = "=0.1+0.2"\nRange("Z3").Value = 0.3',
+        ]
+        for i, formula in enumerate(shows, 1):
+            quoted = formula.replace('"', '""')
+            lines.append(f'Range("B{i}").Formula = "{quoted}"')
+            lines.append(f'Debug.Print TypeName(Range("B{i}").Value) & ":" & CStr(Range("B{i}").Value)')
+        # numbers are compared to 15 digits; a formula or a SUM that ends on a sum which all but cancels gives 0;
+        # INT and ROUND work on the 15-digit number; odd roots of negatives; text and logical values count where
+        # they are written in the formula, not where they are read from cells; an empty argument is a 0
+        self.assertEqual(dict(zip(shows, self.prints("\n".join(lines)), strict=True)), shows)
+
+    def test_a_formula_that_wants_one_value_takes_its_own_row_or_column_of_a_range(self):
+        body = (
+            'Range("F1").Value = 1\nRange("F2").Value = 2\nRange("F3").Value = 3\n'
+            'Range("G1").Value = "a"\nRange("G2").Value = "b"\nRange("G3").Value = "c"\n'
+            'Range("H2").Formula = "=F1:F3"\nRange("H9").Formula = "=F1:F3"\nRange("G10").Formula = "=F1:G1"\n'
+            'Range("I2").Formula = "=INDEX(F1:G3,0,1)"\nRange("I3").Formula = "=INDEX(F1:G3,2)"\n'
+            'Range("I4").Formula = "=INDEX(F1:G1,2)"\nRange("I5").Formula = "=INDEX(F1:G3,4,1)"\n'
+            'Debug.Print Range("H2").Value, CStr(Range("H9").Value), Range("G10").Value, Range("I2").Value, '
+            'CStr(Range("I3").Value), Range("I4").Value, CStr(Range("I5").Value)'
+        )
+        # =F1:F3 in row 2 is F2, in row 9 #VALUE!; INDEX with 0 is a whole column; one index into a block is #REF!
+        self.assertEqual(self.prints(body), ["2 Error 2015 a 2 Error 2023 a Error 2023"])
+
+    def test_manual_calculation_shows_old_values_until_something_calculates(self):
+        body = (
+            'Range("A1").Value = 1\nRange("A2").Formula = "=A1+1"\nApplication.Calculation = xlCalculationManual\n'
+            'Range("A1").Value = 5\nDebug.Print Range("A2").Value\n'
+            'Range("A3").Formula = "=A2*10"\nDebug.Print Range("A3").Value\n'
+            'Range("A2").Formula = "=A1+2"\nDebug.Print Range("A2").Value, Range("A3").Value\n'
+            'Range("A1").Value = 7\nRange("A5").Formula = "=SUM(A1:A3)"\nDebug.Print Range("A5").Value\n'
+            'Application.Calculate\nDebug.Print Range("A5").Value\nRange("A1").Value = 9\n'
+            'Debug.Print Range("A3").Value\nApplication.Calculation = xlCalculationAutomatic\nDebug.Print Range("A3").Value'
+        )
+        # a formula keeps its value when its input changes; one entered is calculated once, from the values cells
+        # show, stale or not; Calculate and the return to automatic bring everything up to date
+        self.assertEqual(self.prints(body), ["2", "20", "7 20", "34", "106", "90", "110"])
+
+    def test_worksheet_functions_take_values_as_a_formula_would(self):
+        body = (
+            "Set wf = Application.WorksheetFunction\n"
+            'Debug.Print wf.Sum(1, "2", True), wf.Max("5", 3), wf.Min("5", 3), wf.Sum(Array(1, "2", True)), '
+            'wf.Sum(0.1, 0.2, -0.3)\nOn Error Resume Next\nx = wf.Sum("a", 1)\nDebug.Print Err.Number'
+        )
+        # text and TRUE count when passed on their own, not inside an array; text that is no number is error 1004
+        self.assertEqual(self.prints(body), ["4 5 3 1 0", "1004"])
+
     def test_writing_and_reading_cells(self):
         body = (
             'Range("A1").Value = "123"\nRange("A2").Value = "\'007"\nCells(3, 1) = True\n'

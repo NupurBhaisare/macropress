@@ -66,7 +66,7 @@ ASSUMPTIONS = {
     ),
     "WRITE-EMPTY-STRING": ("unverified", 'Writing "" to a cell leaves it empty.'),
     "FORMULAS-RECALCULATED": (
-        "unverified",
+        "verified",
         "Formulas whose inputs changed are recalculated before their values are read and before saving "
         "(automatic calculation), with Excel's rules for the functions the evaluator covers.",
     ),
@@ -76,8 +76,9 @@ ASSUMPTIONS = {
         "(Excel calculates it when the file is opened); a macro reading its value stops.",
     ),
     "CALC-MANUAL": (
-        "unverified",
-        "With Calculation set to manual, a stale formula shows its old value until the workbook is saved.",
+        "verified",
+        "Under manual calculation a formula whose inputs changed shows its old value until Calculate, a save or a "
+        "return to automatic calculation; a formula entered meanwhile is calculated once, from what cells show.",
     ),
     "SPILL-BLANK-AS-ZERO": ("unverified", "A blank cell in a dynamic-array result (SORT, UNIQUE, ...) spills as 0."),
     "SORT-TEXT-ORDER": (

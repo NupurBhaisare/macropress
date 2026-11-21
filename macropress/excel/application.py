@@ -32,7 +32,7 @@ class Application(VBAObject):
             "screenupdating": True,
             "displayalerts": True,
             "enableevents": True,
-            "calculation": -4105,
+            "calculation": -4135 if book.manual else -4105,  # as the workbook was saved: manual or automatic
             "statusbar": False,
             "displaystatusbar": True,
         }
@@ -121,7 +121,18 @@ class Application(VBAObject):
     get_screenupdating, let_screenupdating = _setting("screenupdating")
     get_displayalerts, let_displayalerts = _setting("displayalerts")
     get_enableevents, let_enableevents = _setting("enableevents")
-    get_calculation, let_calculation = _setting("calculation")
+    get_calculation = _setting("calculation")[0]
+
+    def let_calculation(self, value):
+        mode = to_long(value)
+        if mode not in (-4105, -4135, 2):  # xlCalculationAutomatic, xlCalculationManual, xlCalculationSemiautomatic
+            raise VBARuntimeError(1004, "Unable to set the Calculation property of the Application class")
+        if mode == -4135:
+            self.book.recalc_all()  # what automatic calculation has done by now
+        self.settings["calculation"] = mode
+        if mode != -4135:
+            self.book.recalc_all()
+
     get_statusbar, let_statusbar = _setting("statusbar")
     get_displaystatusbar, let_displaystatusbar = _setting("displaystatusbar")
 

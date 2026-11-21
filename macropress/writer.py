@@ -107,7 +107,8 @@ def save_workbook(book, original_path, out_path):
     """Write `book` (as changed by macros) to out_path, starting from original_path."""
     if os.path.realpath(out_path) == os.path.realpath(original_path):
         raise VBANotImplemented("saving over the input workbook: write the updated copy to another path")
-    book.recalc_all()  # Excel recalculates before saving
+    if book.calc_on_save:
+        book.recalc_all()  # Excel recalculates before saving, unless the workbook says not to
     base = read_workbook(original_path)
     pkg = Package(original_path)
     if len(base.sheets) != len(book.sheets):

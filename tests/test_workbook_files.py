@@ -352,6 +352,33 @@ def test_event_procedures_excel_would_have_run_are_named_in_the_report(tmp_path,
     )
 
 
+def test_a_press_takes_what_its_caller_gives_and_says_what_it_could_not_use(tmp_path, monkeypatch, capsys):
+    code = (
+        '#If Mac Then\nConst Where = "mac"\n#Else\nConst Where = "windows"\n#End If\n'
+        'Sub Go()\nRange("A1").Value = Environ("USERNAME") & Where\nEnd Sub\n'
+        "Sub Spin()\nDo\nLoop\nEnd Sub\n"
+    )
+    project = build_project([("Module1", code)])
+    monkeypatch.setattr(api, "from_workbook", lambda path: project)
+    path, out = _workbook(tmp_path / "in.xlsm"), tmp_path / "out.xlsm"
+    # one name is one button, a path may be a Path, Environ gives what it is given, an answer nobody asked for is told
+    report = api.press(path, "Go", out, environ={"USERNAME": "nupur"}, answers=["yes"])
+    assert api.succeeded(report) and report["answers_unused"] == ["yes"] and report["input"] == str(path)
+    assert _value(read_workbook(str(out)).find_sheet("Data"), 1, 1) == "nupurwindows"
+    assert any("CONDITIONAL-COMPILATION" in line for line in report["unverified_behaviours"])
+    # a name Environ was not given depends on the machine; a macro that would not end stops at the time limit
+    assert api.press(path, ["Go"], out)["steps"][0]["status"] == "stopped: not modelled"
+    assert api.press(path, ["Spin"], out, timeout=0.05)["steps"][0]["status"] == "stopped: time limit"
+    # a copy that could not be saved is refused before anything runs
+    for copy, why in ((path, "over the workbook itself"), (tmp_path / "out.xlsx", "must end in .xlsm")):
+        report = api.press(path, ["Go"], copy, environ={"USERNAME": "n"})
+        assert why in report["error"] and report["steps"] == []
+    argv = ["press", str(path), "--button", "Go", "--out", str(out), "--timeout", "30"]
+    assert main([*argv, "--env", "USERNAME=nupur"]) == 0
+    assert main([*argv, "--env", "USERNAME"]) == 1
+    assert json.loads(capsys.readouterr().out.splitlines()[-1])["error"] == "--env must be NAME=VALUE"
+
+
 def test_buttons_are_listed_by_the_text_they_show(tmp_path):
     rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
     parts = {

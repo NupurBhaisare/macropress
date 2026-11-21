@@ -63,7 +63,19 @@ def cmd_press(args):
         now = dt.datetime.strptime(args.now, "%Y-%m-%d %H:%M:%S") if args.now else None
     except ValueError:
         return _report({"input": args.workbook, "steps": [], "error": "--now must be 'YYYY-MM-DD HH:MM:SS'"}, 1)
-    result = press(args.workbook, args.button, args.out, code=args.code, now=now, answers=args.answer or [])
+    environ = dict(item.split("=", 1) for item in args.env or [] if "=" in item)
+    if len(environ) != len(args.env or []):
+        return _report({"input": args.workbook, "steps": [], "error": "--env must be NAME=VALUE"}, 1)
+    result = press(
+        args.workbook,
+        args.button,
+        args.out,
+        code=args.code,
+        now=now,
+        answers=args.answer or [],
+        environ=environ,
+        timeout=args.timeout,
+    )
     return _report(result, 0 if succeeded(result) else 1)
 
 
@@ -107,6 +119,8 @@ def main(argv=None):
     p.add_argument("--code", help="where to save the converted Python")
     p.add_argument("--now", help="value of Now(), 'YYYY-MM-DD HH:MM:SS'")
     p.add_argument("--answer", action="append", help="answer to the next MsgBox/InputBox question (repeatable)")
+    p.add_argument("--env", action="append", metavar="NAME=VALUE", help='what Environ("NAME") gives (repeatable)')
+    p.add_argument("--timeout", type=float, metavar="SECONDS", help="stop the macros when they have run this long")
     args = ap.parse_args(argv)
     return {"buttons": cmd_buttons, "press": cmd_press, "convert": cmd_convert}[args.cmd](args)
 

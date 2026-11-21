@@ -842,6 +842,11 @@ def deep_calls():
 
 def run_macro(fn, ctx):
     """Run one converted macro. Returns its outcome as (status, message): what stops it is told, never raised."""
+    global _CTX
+    _CTX = ctx
+    _values.set_note(ctx.ledger.note)
+    if ctx.timeout is not None and ctx.deadline is None:
+        ctx.deadline = _time.monotonic() + ctx.timeout
     try:
         with deep_calls():
             fn(ctx)
@@ -873,7 +878,7 @@ class Context:
         self.ledger = Ledger()
         _values.set_note(self.ledger.note)
         self.timeout = timeout  # seconds the macros may run in all, or None
-        self.deadline = None if timeout is None else _time.monotonic() + timeout
+        self.deadline = None  # when that time is up: counted from the first macro's start
         self.now = now or _dt.datetime.now().replace(microsecond=0)
         self.clock = Clock(self.now)
         self.app = Application(self.book, self.ledger, self.clock)
@@ -927,12 +932,15 @@ def main(buttons, macros, description="", argv=None):
     ap.add_argument("--macro", action=_Step, dest="macro", help="macro name to run (repeatable, in order)")
     ap.add_argument("--now", help="value of Now(), 'YYYY-MM-DD HH:MM:SS'")
     ap.add_argument("--answer", action="append", help="answer for the next MsgBox/InputBox question")
+    ap.add_argument("--env", action="append", metavar="NAME=VALUE", help='what Environ("NAME") gives (repeatable)')
+    ap.add_argument("--timeout", type=float, help="seconds the macros may run in all")
     args = ap.parse_args(argv)
     steps = getattr(args, "steps", None) or []
     if not steps:
         ap.error("choose at least one --button or --macro. Buttons: " + ", ".join(repr(b) for b in buttons))
     now = _dt.datetime.strptime(args.now, "%Y-%m-%d %H:%M:%S") if args.now else None
-    ctx = Context(args.input, now=now, answers=args.answer or [])
+    environ = dict(item.split("=", 1) for item in args.env or [] if "=" in item)
+    ctx = Context(args.input, now=now, answers=args.answer or [], environ=environ, timeout=args.timeout)
     status = 0
     for i, (kind, name) in enumerate(steps, 1):
         table = buttons if kind == "button" else macros

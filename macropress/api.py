@@ -62,6 +62,7 @@ def _changes(before, after, examples=3):
 def list_buttons(workbook):
     """The workbook's buttons (caption, macro, sheet) and its macros. A workbook that cannot be read is reported as
     the report's "error"; macros that cannot be read, as its "macros_error"."""
+    workbook = os.fspath(workbook)
     out = {"input": workbook, "buttons": []}
     try:
         out["buttons"] = [
@@ -89,23 +90,41 @@ def list_buttons(workbook):
     return out
 
 
-def press(workbook, buttons, out, *, code=None, now=None, answers=()):
+def _refused_copy(workbook, out):
+    """Why `out` cannot be the copy, or None: told before anything runs, not after the macros have."""
+    if os.path.exists(out) and os.path.samefile(workbook, out):
+        return "the copy cannot be saved over the workbook itself: give another path for it"
+    kind, wanted = os.path.splitext(workbook)[1].lower(), os.path.splitext(out)[1].lower()
+    if kind != wanted:
+        return f"the copy is the same kind of file as the workbook, so its name must end in {kind} too, not {wanted!r}"
+    return None
+
+
+def press(workbook, buttons, out, *, code=None, now=None, answers=(), environ=None, timeout=None):
     """Convert the workbook's VBA, press `buttons` (captions or macro names) in order on a copy, and save the copy as
     `out`; the workbook itself is never written. A button that stops ends the run: the steps that ran, and the copy
     as they left it, are still reported and saved.
 
+    buttons  the captions or macro names to press, in order; one name on its own is one button
     code     also save the converted Python to this path
     now      a datetime: what Now, Date and Time return when the run starts, so a run can be repeated exactly
     answers  the answers to the macros' MsgBox and InputBox questions, in the order they are asked
+    environ  what Environ("NAME") gives, as a dict; a macro that asks for a name not in it stops
+    timeout  the seconds the macros may run in all; a run that passes them stops with "stopped: time limit"
     """
     from . import codegen, runtime
-    from .errors import VBAEnd, VBAError, VBARuntimeError
 
+    workbook, out, code = os.fspath(workbook), os.fspath(out), os.fspath(code) if code else None
+    buttons = [buttons] if isinstance(buttons, str) else list(buttons)
     result = {"input": workbook, "steps": []}
     stage = "the workbook could not be read"
     try:
         entry = [(label, macro) for label, macro, _ in find_entry_points(workbook)]
         result["buttons_available"] = [{"caption": label, "macro": m} for label, m in entry]
+        refused = _refused_copy(workbook, out)
+        if refused:
+            result["error"] = refused
+            return result
         project = from_workbook(workbook)
         wanted = [b.strip() for b in buttons]
         known = {m.lower() for _, m in entry}
@@ -137,10 +156,13 @@ def press(workbook, buttons, out, *, code=None, now=None, answers=()):
             if label:
                 shared.setdefault(label.lower(), set()).add(m)
         stage = "the workbook could not be read"
-        ctx = runtime.Context(workbook, now=now, answers=list(answers))
+        ctx = runtime.Context(workbook, now=now, answers=list(answers), environ=environ, timeout=timeout)
         events = [f"{m.name}.{p.name}" for m, p in project.procedures() if m.kind != "standard" and EVENT.match(p.name)]
         if events:
             ctx.ledger.note("EVENTS-NOT-RUN", ", ".join(events))
+        conditional = [m.name for m in project.modules.values() if m.conditional]
+        if conditional:
+            ctx.ledger.note("CONDITIONAL-COMPILATION", ", ".join(conditional))
         before = ctx.snapshot()
         stage = "the buttons could not be pressed"
         for want in wanted:
@@ -160,20 +182,14 @@ def press(workbook, buttons, out, *, code=None, now=None, answers=()):
                 break
             name, fn = hit
             step = {"button": name if want.lower() in by_caption else by_macro.get(want.lower(), name)}
-            try:
-                fn(ctx)
-                step["status"] = "completed"
-            except VBAEnd:
-                step["status"] = "completed"
-            except VBARuntimeError as err:
-                step.update(status="stopped by a VBA error", message=str(err))
-            except VBAError as err:
-                step.update(status="stopped: not modelled", message=str(err))
-            except Exception as err:  # noqa: BLE001 - a fault in the converter stops this button, not the run
-                step.update(status="stopped: converter error", message=f"{type(err).__name__}: {err}")
+            step["status"], message = runtime.run_macro(fn, ctx)
+            if message:
+                step["message"] = message
             result["steps"].append(step)
             if step["status"] != "completed":
                 break
+        if ctx.answers:  # answers no question took: the macros did not ask what the caller thought they would
+            result["answers_unused"] = [str(a) for a in ctx.answers]
         stage = "the updated workbook could not be saved"
         os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
         ctx.save(out)

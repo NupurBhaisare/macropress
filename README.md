@@ -95,7 +95,8 @@ $ macropress buttons examples/invoice/invoice.xlsm
 ```
 
 Press buttons by caption or macro name, in order. `Apply discount` asks two questions, which `--answer` answers in
-the order they are asked; `--now` fixes the clock:
+the order they are asked; `--now` fixes the clock. `--env NAME=VALUE` gives a macro what `Environ("NAME")` returns, and
+`--timeout SECONDS` stops macros that run longer:
 
 ```console
 $ macropress press examples/invoice/invoice.xlsm \
@@ -143,7 +144,7 @@ report = macropress.press(
     ["Apply discount", "Calculate totals"],
     out="invoice-done.xlsm",
     answers=["10", "yes"],
-)
+)  # also: now=, environ={"USERNAME": "..."}, timeout=seconds, code="invoice.py"
 if not macropress.succeeded(report):
     print(report.get("error") or report["steps"][-1])
 ```
@@ -152,12 +153,13 @@ if not macropress.succeeded(report):
 
 | Field | What it holds |
 | --- | --- |
-| `steps` | One entry per button pressed, with its `status`: `completed`; `stopped by a VBA error` (the macro raised an error, as it would in Excel); `stopped: not modelled` (it needs something MacroPress does not model); `stopped: converter error` (a bug in MacroPress, please report it); or `not found`. The first button that does not complete ends the run. |
+| `steps` | One entry per button pressed, with its `status`: `completed`; `stopped by a VBA error` (the macro raised an error, as it would in Excel); `stopped: not modelled` (it needs something MacroPress does not model); `stopped: time limit` (it ran past `--timeout`); `stopped: converter error` (a bug in MacroPress, please report it); or `not found`. The first button that does not complete ends the run. |
 | `output` | The saved copy. It is saved even when a button stops, with the changes made up to that point. |
 | `changes` | Per sheet: how many cells changed, the rows with data before and after, whether hidden rows changed, and a few example cells. |
 | `unverified_behaviours` | Assumptions about Excel this run relied on that have not been checked against Excel, and known differences from Excel that applied to this run. |
 | `messages` | What the macros showed: `MsgBox` and `InputBox` prompts, and `Debug.Print` output. |
-| `error` | Whatever stopped the run outside the buttons, with the stage it stopped at: reading the workbook, converting the VBA, saving the copy. |
+| `answers_unused` | The answers no question took, when there are any: the macros did not ask what the caller expected. |
+| `error` | Whatever stopped the run outside the buttons, with the stage it stopped at: reading the workbook, converting the VBA, saving the copy. A copy that could not be saved (over the workbook itself, or with another extension) is refused here before anything runs. |
 
 On the command line, long texts and lists in the report are clipped (500 characters, 1,000 items, with the full count
 beside a clipped list) so a report stays small enough to hand to a program or a language model.

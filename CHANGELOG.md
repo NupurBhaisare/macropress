@@ -68,4 +68,9 @@ Found by running some 990 small macros in both Excel and MacroPress and comparin
 - **The saved copy**: a changed cell is saved with the number format the model has for it, a new cell takes its
   column's style, an array formula entered with Ctrl+Shift+Enter is saved as one when its value changes, and a number
   too large for Excel is refused rather than written.
+- **Running**: `press` takes one button given as a string, paths given as `Path` objects, `environ` for what
+  `Environ` returns (`--env NAME=VALUE`) and `timeout` to stop macros that run too long (`--timeout`). A copy that
+  could not be saved, over the workbook itself or with another extension, is refused before the macros run instead of
+  after. The report lists answers no question took (`answers_unused`), and says when a module's `#If` blocks were
+  read as Windows reads them.
 

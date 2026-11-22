@@ -467,7 +467,8 @@ def _serial(day):
     return (day - dt.date(1899, 12, 30)).days
 
 
-def _sheet_xml(index, columns, rows, strings, has_buttons, styles=None):
+def _sheet_xml(index, columns, rows, strings, has_buttons, styles=None, protection=""):
+    """protection: a <sheetProtection> element, for a sheet the file saves protected."""
     styles = styles or STYLES
     cols = ""
     for i, column in enumerate(columns, 1):
@@ -500,7 +501,7 @@ def _sheet_xml(index, columns, rows, strings, has_buttons, styles=None):
     return (
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="{MAIN}" xmlns:r="{REL}">'
         f'<sheetPr codeName="Sheet{index}"/><sheetViews><sheetView workbookViewId="0"{selected}/></sheetViews>'
-        f'<sheetFormatPr defaultRowHeight="15"/><cols>{cols}</cols><sheetData>{"".join(body)}</sheetData>'
+        f'<sheetFormatPr defaultRowHeight="15"/><cols>{cols}</cols><sheetData>{"".join(body)}</sheetData>{protection}'
         '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
         f"{drawing}</worksheet>"
     )
@@ -554,17 +555,18 @@ STYLES_XML = (
 
 def more_styles(formats):
     """The style sheet with more number formats, for workbooks that need them: `formats` is [(style name, one of
-    Excel's own formats by its number, or a format code)]. Returns the XML and every style's index by name."""
+    Excel's own formats by its number, or a format code)], each with {"unlocked": True} after it for a style whose
+    cells a protected sheet lets change. Returns the XML and every style's index by name."""
     styles, xfs, codes = dict(STYLES), [], []
-    for style, number_format in formats:
+    for style, number_format, *extra in formats:
         if not isinstance(number_format, int):
             code = escape(number_format, {'"': "&quot;"})
             codes.append(f'<numFmt numFmtId="{166 + len(codes)}" formatCode="{code}"/>')
             number_format = 165 + len(codes)
         styles[style] = len(STYLES) + len(xfs)
-        xfs.append(
-            f'<xf numFmtId="{number_format}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
-        )
+        xf = f'<xf numFmtId="{number_format}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"'
+        unlocked = extra and extra[0].get("unlocked")
+        xfs.append(xf + (' applyProtection="1"><protection locked="0"/></xf>' if unlocked else "/>"))
     xml = (
         STYLES_XML.replace('<cellXfs count="5">', f'<cellXfs count="{5 + len(xfs)}">')
         .replace("</cellXfs>", "".join(xfs) + "</cellXfs>")
@@ -595,8 +597,9 @@ def build_workbook(name, spec=None, folder=None):
         ("/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"),
     ]
     workbook_rels = []
-    for i, (_name, columns, rows, buttons) in enumerate(sheets, 1):
-        parts[f"xl/worksheets/sheet{i}.xml"] = _sheet_xml(i, columns, rows, strings, bool(buttons), styles)
+    for i, (_name, columns, rows, buttons, *options) in enumerate(sheets, 1):
+        protection = options[0].get("protection", "") if options else ""
+        parts[f"xl/worksheets/sheet{i}.xml"] = _sheet_xml(i, columns, rows, strings, bool(buttons), styles, protection)
         overrides.append(
             (
                 f"/xl/worksheets/sheet{i}.xml",
@@ -618,7 +621,9 @@ def build_workbook(name, spec=None, folder=None):
         (f"rId{n + 2}", f"{REL}/sharedStrings", "sharedStrings.xml"),
         (f"rId{n + 3}", "http://schemas.microsoft.com/office/2006/relationships/vbaProject", "vbaProject.bin"),
     ]
-    sheet_list = "".join(f'<sheet name="{escape(s[0])}" sheetId="{i}" r:id="rId{i}"/>' for i, s in enumerate(sheets, 1))
+    sheet_list = "".join(
+        f'<sheet name="{escape(s[0])}" sheetId="{i}"{_state(s)} r:id="rId{i}"/>' for i, s in enumerate(sheets, 1)
+    )
     parts["xl/workbook.xml"] = (
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="{MAIN}" xmlns:r="{REL}">'
         '<workbookPr codeName="ThisWorkbook"/><bookViews><workbookView/></bookViews>'
@@ -642,6 +647,12 @@ def build_workbook(name, spec=None, folder=None):
         f'<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>{types}</Types>'
     )
     return parts
+
+
+def _state(sheet):
+    """A sheet's state attribute: a sheet's spec may end with {"state": "hidden"} or {"state": "veryHidden"}."""
+    state = sheet[4].get("state") if len(sheet) > 4 else None
+    return f' state="{state}"' if state else ""
 
 
 def _rels(rels):

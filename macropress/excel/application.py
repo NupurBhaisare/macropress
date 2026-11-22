@@ -8,6 +8,7 @@ from ..values import (
     is_numeric_value,
     to_date,
     to_long,
+    to_str,
 )
 from .constants import XL_CONSTANTS
 from .functions import WorksheetFunction
@@ -21,11 +22,12 @@ from .range import Range
 class Application(VBAObject):
     vba_type_name = "Application"
 
-    def __init__(self, book, ledger, clock):
+    def __init__(self, book, ledger, clock, answers=None):
         self.book = book
         book.app = self
         self.ledger = ledger
         self.clock = clock
+        self.answers = answers if answers is not None else []  # the run's answers to questions, shared with MsgBox
         self.clipboard = None
         self.constants = XL_CONSTANTS
         self.settings = {
@@ -41,6 +43,12 @@ class Application(VBAObject):
 
     def note(self, key, detail=None):
         self.ledger.note(key, detail)
+
+    def ask(self, question):
+        """What the user types where Excel asks: the run's next answer; without one, the run stops."""
+        if not self.answers:
+            raise VBANotImplemented(f"Excel asks for {question}; pass an answer")
+        return to_str(self.answers.pop(0))
 
     def globals_for(self, module):
         """The unqualified names a module's code sees: Range, Cells, Rows and Columns are its own sheet's in a sheet's
@@ -102,7 +110,8 @@ class Application(VBAObject):
         return self.wsf
 
     def get_cutcopymode(self):
-        return 1 if self.clipboard is not None else False
+        """xlCopy (1) after a copy, xlCut (2) after a cut, 0 when nothing waits to be pasted."""
+        return 0 if self.clipboard is None else 2 if self.clipboard.cut else 1
 
     def let_cutcopymode(self, value):
         v = default_value(value)

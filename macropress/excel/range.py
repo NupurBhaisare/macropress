@@ -11,8 +11,10 @@ from ..numfmt import (
     DATE_AND_TIME,
     TEXT,
     TIME,
+    entered,
     is_currency_format,
     is_date_format,
+    is_time_format,
     writes_a_currency_sign,
 )
 from ..values import (
@@ -32,7 +34,15 @@ from ..values import (
     to_str,
     typed_number,
 )
-from .addresses import area_text, col_num, shift_formula
+from .addresses import (
+    R1C1Formula,
+    area_text,
+    col_num,
+    formula_to_r1c1,
+    moved_references,
+    shift_formula,
+    written_r1c1,
+)
 from .constants import MAX_COL, MAX_ROW, PENDING
 from .filters import AutoFilterState, BoolCriterion, ValuesCriterion, apply_filter, criterion_from_text
 from .storage import Cell
@@ -40,6 +50,19 @@ from .storage import Cell
 # ---------------------------------------------------------------------------
 # Range
 # ---------------------------------------------------------------------------
+
+
+def _counting(start, at, period):
+    """A line's values going on by 1 a step: `start` at position `at` of a block of `period` cells, repeated."""
+    return lambda p: start + (p - at) // period if (p - at) % period == 0 else None
+
+
+def _trend(ys):
+    """The least-squares line through ys at 0, 1, 2...: what AutoFill continues numbers along."""
+    n = len(ys)
+    mean_x, mean_y = (n - 1) / 2, sum(ys) / n
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in enumerate(ys)) / sum((x - mean_x) ** 2 for x in range(n))
+    return lambda p: mean_y + slope * (p - mean_x)
 
 
 def _check_formula(text):
@@ -50,8 +73,19 @@ def _check_formula(text):
 
 
 class Clipboard:
-    def __init__(self, sheet, rows, c1, c2):
-        self.sheet, self.rows, self.c1, self.c2 = sheet, rows, c1, c2
+    def __init__(self, sheet, rows, c1, c2, cut=False):
+        self.sheet, self.rows, self.c1, self.c2, self.cut = sheet, rows, c1, c2, cut
+
+
+# AutoFill's Type:= and what each does here; others are not modelled
+FILL_DEFAULT, FILL_COPY, FILL_SERIES, FILL_FORMATS, FILL_VALUES, FILL_DAYS = 0, 1, 2, 3, 4, 5
+# Names Excel counts on in a fill (its lists of months and weekdays, in the language of the machine)
+_LISTED = {
+    name.lower()
+    for full in ("January February March April May June July August September October November December "
+                 "Sunday Monday Tuesday Wednesday Thursday Friday Saturday").split()
+    for name in (full, full[:3])
+}  # fmt: skip
 
 
 class Range(VBAObject):
@@ -137,11 +171,35 @@ class Range(VBAObject):
         self.sheet.check_merged(*self.rect)
         if (self.r2 - self.r1 + 1) * (self.c2 - self.c1 + 1) > 5_000_000:
             raise VBANotImplemented("writing one value into a very large range")
-        for r1, c1, r2, c2 in self._written_areas():
-            if isinstance(value, VBAArray):
+        areas = self._written_areas()
+        if isinstance(value, VBAArray):
+            self._guard_contents(areas)
+            for r1, c1, r2, c2 in areas:
                 self._write_array(value, r1, c1, r2, c2, plain)
+            return
+        v, refused = default_value(value), False
+        for area in areas:
+            if self.sheet.protects() and self.sheet.locks(*area) is not False:
+                # a protected sheet: one value written over cells some of which are locked reaches the others
+                self.app.note("PROTECTED-SHEET", f"{self.sheet.name}: {area_text(*area)}")
+                refused = True
+                for r in range(area[0], area[2] + 1):
+                    for c in range(area[1], area[3] + 1):
+                        if not self.sheet.locked_at(r, c):
+                            self._write(v, r, c, r, c, plain)
             else:
-                self._write(default_value(value), r1, c1, r2, c2, plain)
+                self._write(v, *area, plain)
+        if refused:
+            raise VBARuntimeError(1004, "The cell or chart you're trying to change is on a protected sheet")
+
+    def _guard_contents(self, areas):
+        """A change on a protected sheet to cells some of which are locked, and some not, is not modelled; to locked
+        cells alone it is error 1004."""
+        sheet = self.sheet
+        if sheet.protects():
+            if any(sheet.locks(*area) is None for area in areas):
+                raise VBANotImplemented("changing locked and unlocked cells at once on a protected sheet (unverified)")
+            sheet.guard("contents", areas)
 
     def _written_areas(self):
         """The parts of the range that a write or a clear reaches. On a filtered sheet these are the rows the filter
@@ -243,21 +301,32 @@ class Range(VBAObject):
             return f"{v:.0f}" if 1e15 <= abs(v) < 1e21 else format_double(v)
         return str(v)
 
-    def _write_formula(self, value, dynamic):
+    def _write_formula(self, value, dynamic, r1c1=False):
+        """A formula for each cell: its relative references move with each cell, as when Excel fills a range. One
+        written R1C1 style (FormulaR1C1, or Formula given R1C1 text, which Excel reads too) is each cell's own."""
         text = default_value(value)
         if not isinstance(text, str) or not text.startswith("=") or len(text) == 1:
             return self._assign(value, plain=False)  # Formula = 5, a Date or text: the same as Value
         self._single_sheet_target("writing formulas")
         self.sheet.check_merged(*self.rect)
-        _check_formula(text[1:])
-        for r1, c1, r2, c2 in self._written_areas():
+        if r1c1 or written_r1c1(text[1:]):
+            at = R1C1Formula(text[1:]).a1
+        else:
+            _check_formula(text[1:])
+
+            def at(r, c):
+                return shift_formula(text[1:], r - self.r1, c - self.c1)
+
+        _check_formula(at(self.r1, self.c1))
+        areas = self._written_areas()
+        self._guard_contents(areas)
+        for r1, c1, r2, c2 in areas:
             for r in range(r1, r2 + 1):
-                for c in range(c1, c2 + 1):  # relative references move with each cell, as when Excel fills a range
+                for c in range(c1, c2 + 1):
                     if self.sheet.format_at(r, c) == TEXT:
                         self.sheet.put(r, c, text)  # a cell formatted as Text keeps the formula as text
                     else:
-                        formula = shift_formula(text[1:], r - self.r1, c - self.c1)
-                        self.sheet.put(r, c, PENDING, formula, dynamic=dynamic)
+                        self.sheet.put(r, c, PENDING, at(r, c), dynamic=dynamic)
 
     def let_formula(self, value):
         """Formula: a formula that returns one value (an array result gives its top-left value)."""
@@ -269,6 +338,23 @@ class Range(VBAObject):
 
     get_formula2 = get_formula
 
+    def get_formular1c1(self):
+        """The formula written R1C1 style, as seen from its cell; for a cell with no formula, what Formula gives."""
+        if (self.r1, self.c1) != (self.r2, self.c2):
+            raise VBANotImplemented("FormulaR1C1 of a multi-cell range")
+        cell = self.sheet.get_cell(self.r1, self.c1)
+        if cell is None or cell.formula is None:
+            return self.get_formula()
+        return "=" + formula_to_r1c1(fx.display_syntax(cell.formula), self.r1, self.c1)
+
+    get_formula2r1c1 = get_formular1c1
+
+    def let_formular1c1(self, value):
+        self._write_formula(value, dynamic=False, r1c1=True)
+
+    def let_formula2r1c1(self, value):
+        self._write_formula(value, dynamic=True, r1c1=True)
+
     def get_text(self):
         if (self.r1, self.c1) != (self.r2, self.c2):
             raise VBANotImplemented("Text of a multi-cell range")
@@ -279,10 +365,42 @@ class Range(VBAObject):
         return True
 
     def get_numberformat(self):
-        code = self.sheet.format_at(self.r1, self.c1) or "General"
+        """The cells' number format; Null when they have more than one."""
+        found = self.sheet.styles_in(*self.rect, 0)
+        if len(found) > 1:
+            return NULL
+        code = found.pop() or "General"
         if code in (DATE, DATE_AND_TIME):
             self.app.note("DATE-FORMAT-NAME")
         return code
+
+    def let_numberformat(self, value):
+        """A number format for the cells, as Excel reads the code it is given (numfmt.entered). On a filtered sheet it
+        reaches the rows the filter shows, as a write does."""
+        self._single_sheet_target("setting NumberFormat")
+        v = default_value(value)
+        if isinstance(v, bool):  # "True" is no format Excel can read
+            raise VBARuntimeError(1004, "Unable to set the NumberFormat property of the Range class")
+        if isinstance(v, VBAArray):
+            raise VBANotImplemented("NumberFormat set from an array")
+        code = entered("" if v is EMPTY or v is NULL else to_str(v))
+        self.sheet.guard("format")
+        for area in self._written_areas():
+            self.sheet.restyle(*area, numfmt=code)
+
+    def get_locked(self):
+        """Whether the cells are locked, as a protected sheet asks; Null when some are and some are not."""
+        found = self.sheet.styles_in(*self.rect, 1)
+        return NULL if len(found) > 1 else found.pop()
+
+    def let_locked(self, value):
+        self._single_sheet_target("setting Locked")
+        v = default_value(value)
+        if not isinstance(v, (bool, int, float)) or isinstance(v, VBAArray):
+            raise VBARuntimeError(13, "Type mismatch")
+        self.sheet.guard("lock")
+        for area in self._written_areas():
+            self.sheet.restyle(*area, locked=bool(v))
 
     # --- geometry ---
     def get_row(self):
@@ -382,8 +500,10 @@ class Range(VBAObject):
     def let_hidden(self, value):
         hide = bool(default_value(value))
         if self.c1 == 1 and self.c2 == MAX_COL:
+            self.sheet.guard("rows")
             target, rng = self.sheet.hidden_rows, range(self.r1, self.r2 + 1)
         elif self.r1 == 1 and self.r2 == MAX_ROW:
+            self.sheet.guard("columns")
             target, rng = self.sheet.hidden_cols, range(self.c1, self.c2 + 1)
         else:
             raise VBARuntimeError(1004, "Unable to set the Hidden property of the Range class")
@@ -501,8 +621,10 @@ class Range(VBAObject):
             s.check_merged(*self.rect)
         areas = self._written_areas() if len(targets) == 1 else [self.rect]
         for s in targets:
-            for area in areas:
-                s.clear_rect(*area, formats=formats)
+            s.guard("contents", areas)
+        for s in targets:
+            for area in areas:  # on a protected sheet Clear leaves unlocked cells' formats as they are
+                s.clear_rect(*area, formats=formats and not s.protects())
         return True
 
     def m_delete(self, shift=None):
@@ -534,9 +656,110 @@ class Range(VBAObject):
         self.app.clipboard = clip
         return True
 
+    def m_cut(self, destination=None):
+        """Cut: with a destination the cells move there now; without one they move when pasted (Worksheet.Paste)."""
+        self._single_sheet_target("Cut")
+        if destination is None:
+            self.app.clipboard = Clipboard(self.sheet, list(range(self.r1, self.r2 + 1)), self.c1, self.c2, cut=True)
+            return True
+        if not isinstance(destination, Range):
+            raise VBARuntimeError(424, "Object required")
+        self._move(destination.sheet, destination.r1, destination.c1)
+        self.app.clipboard = None
+        return True
+
+    def _move(self, dst, tr, tc):
+        """Move the cells to dst, their top-left cell at (tr, tc): contents and formats go, the cells left behind are
+        empty and General, and every formula and name in the workbook that reads them reads them where they are now
+        (see addresses.moved_references). A filter does not keep its hidden rows back."""
+        src, book = self.sheet, self.sheet.book
+        r1, c1, r2, c2 = self.rect
+        landed = (tr, tc, tr + r2 - r1, tc + c2 - c1)
+        if landed[2] > MAX_ROW or landed[3] > MAX_COL:
+            raise VBARuntimeError(1004, "The copy area and the paste area are not the same size")
+        dr, dc = tr - r1, tc - c1
+        whole = (c1, c2) == (1, MAX_COL) or (r1, r2) == (1, MAX_ROW)
+        self._refuse_move(src, self.rect, dst, landed, whole)
+        if not whole and (r2 - r1 + 1) * (c2 - c1 + 1) > 1_000_000:
+            raise VBANotImplemented("cutting more than a million cells that are not whole rows or columns")
+        src.fresh()
+        dst.fresh()
+        cells = {}  # what the cells cut hold, and their styles, before anything moves
+        if whole:
+            for r, row in src.rows.items():
+                for c, cell in row.items():
+                    if r1 <= r <= r2 and c1 <= c <= c2:
+                        cells[(r, c)] = cell.copy()
+        else:
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    cell = src.rows.get(r, {}).get(c)
+                    cells[(r, c)] = cell.copy() if cell is not None else Cell(None, None, *src.inherited(r, c))
+        cut, dest = (src, r1, c1, r2, c2), (dst, tr, tc)
+        by_name = book.find_sheet
+        for cell in cells.values():
+            if cell.formula is not None:
+                cell.formula = moved_references(cell.formula, dst, src, cut, dest, by_name)
+        changed = []  # formulas elsewhere that read the cells cut, or the cells they land on
+        for sheet in book.sheets:
+            for r, row in sheet.rows.items():
+                for c, cell in row.items():
+                    if cell.formula is not None and not (sheet is src and r1 <= r <= r2 and c1 <= c <= c2):
+                        text = moved_references(cell.formula, sheet, sheet, cut, dest, by_name)
+                        if text != cell.formula:
+                            changed.append((sheet, r, c, text))
+        names = {
+            key: [(scope, self._moved_name(ref, cut, dest, by_name)) for scope, ref in refs]
+            for key, refs in book.names.items()
+        }
+        src.clear_rect(*self.rect, formats=True)
+        dst.clear_rect(*landed, formats=False)
+        for (r, c), cell in cells.items():
+            dst._store(r + dr, c + dc, cell.value, cell.formula, *cell.style)
+            if cell.formula is not None:
+                book.register_formula(dst, r + dr, c + dc, cell.formula, False)
+        for sheet, r, c, text in changed:
+            sheet.rows[r][c].formula = text
+            sheet.changed = True
+            book.register_formula(sheet, r, c, text, False)
+        book.names = names
+        book.moves.append((src.name, self.rect, dst.name, landed))
+        self.app.note("CUT-MOVES-REFERENCES", f"{src.name}!{area_text(*self.rect)} to {dst.name}!{area_text(*landed)}")
+        dst.changed = True
+        book.cells_changed(dst, *landed)
+
+    @staticmethod
+    def _refuse_move(src, s_rect, dst, landed, whole):
+        """What a cut does that is not modelled: on a protected sheet, part of a merged area, a filter's range, a
+        table, an array formula, and rows or columns that are hidden or formatted whole."""
+        from .addresses import _overlaps  # noqa: PLC0415
+
+        for sheet, rect in ((src, s_rect), (dst, landed)):
+            if sheet.protection is not None and not sheet.ui_only:
+                raise VBANotImplemented("cutting cells of a protected sheet (unverified)")
+            sheet.check_merged(*rect)
+            if sheet.autofilter is not None and _overlaps(rect, sheet.autofilter.rect):
+                raise VBANotImplemented("cutting cells of a filter's range, or onto them")
+            if any(_overlaps(rect, area) for area in (*sheet.spills.values(), *sheet.array_cells.values())):
+                raise VBANotImplemented("cutting part of a dynamic array or array formula, or onto one")
+            for t in sheet.book.tables.values():
+                if t.sheet.lower() == sheet.name.lower() and _overlaps(rect, (t.r1, t.c1, t.r2, t.c2)):
+                    raise VBANotImplemented("cutting cells of a table, or onto them")
+            if whole and (
+                any(rect[0] <= r <= rect[2] for r in (*sheet.hidden_rows, *sheet.row_formats))
+                or any(rect[1] <= c <= rect[3] for c in (*sheet.hidden_cols, *sheet.col_formats, *sheet.col_unlocked))
+            ):
+                raise VBANotImplemented("cutting whole rows or columns that are hidden or formatted whole")
+
+    @staticmethod
+    def _moved_name(ref, cut, dest, by_name):
+        text = ref[1:] if ref.startswith("=") else ref
+        moved = moved_references(text, None, None, cut, dest, by_name)
+        return ref if moved == text else ("=" if ref.startswith("=") else "") + moved
+
     def m_pastespecial(self, paste=None, operation=None, skipblanks=None, transpose=None):
         clip = self.app.clipboard
-        if clip is None:
+        if clip is None or clip.cut:  # cells cut are pasted whole, by Worksheet.Paste
             raise VBARuntimeError(1004, "PasteSpecial method of Range class failed")
         self._single_sheet_target("PasteSpecial")
         mode = -4104 if paste is None else to_long(paste)
@@ -563,69 +786,106 @@ class Range(VBAObject):
         return True
 
     def _paste_area(self, clip):
-        """Where a paste lands: the copied block, from this range's top-left cell. Excel pastes it there when this range
-        is one cell or the block's size; a range of another size it fills by repeating the block, or refuses, which is
-        not modelled. A block that would run off the sheet is Excel's error 1004."""
+        """Where a paste lands: the copied block from this range's top-left cell, laid down as many times as the range
+        holds it, down and across. A range a whole number of blocks high (or one cell high) and a whole number wide
+        (or one cell wide) is filled with blocks; any other takes the block once. A block that would run off the
+        sheet is Excel's error 1004."""
         height, width = len(clip.rows), clip.c2 - clip.c1 + 1
-        size = (self.r2 - self.r1 + 1, self.c2 - self.c1 + 1)
-        if size not in ((1, 1), (height, width)):
-            raise VBANotImplemented(f"pasting {height}x{width} copied cells into {area_text(*self.rect)}, another size")
-        r2, c2 = self.r1 + height - 1, self.c1 + width - 1
+        rows, cols = self.r2 - self.r1 + 1, self.c2 - self.c1 + 1
+        down = rows // height if rows % height == 0 else 1 if rows == 1 else None
+        across = cols // width if cols % width == 0 else 1 if cols == 1 else None
+        if down is None or across is None:
+            down = across = 1
+        r2, c2 = self.r1 + height * down - 1, self.c1 + width * across - 1
         if r2 > MAX_ROW or c2 > MAX_COL:
             raise VBARuntimeError(1004, "The copy area and the paste area are not the same size")
         return self.r1, self.c1, r2, c2
 
-    def _paste(self, clip, what, numfmts):
+    def _paste_rows(self, clip, area):
+        """The rows of the paste area the paste reaches. One cell copied over several on a filtered sheet goes to
+        the rows the filter shows, as a write does; a block of cells lands whole, hidden rows and all."""
+        r1, c1, r2, c2 = area
+        sheet = self.sheet
+        hidden = sheet.hidden_rows - sheet.manual_hidden if sheet.in_filter_mode() else ()
+        hidden = [r for r in hidden if r1 <= r <= r2]
+        if not hidden or (r1, c1) == (r2, c2):
+            return range(r1, r2 + 1)
+        if len(clip.rows) > 1 or clip.c1 != clip.c2:
+            if (r2 - r1 + 1, c2 - c1 + 1) != (len(clip.rows), clip.c2 - clip.c1 + 1):
+                raise VBANotImplemented("pasting copied cells over and over into a filtered range (unverified)")
+            return range(r1, r2 + 1)
+        self.app.note("FILTER-WRITES-VISIBLE")
+        return [r for r in range(r1, r2 + 1) if r not in hidden]
+
+    def _paste(self, clip, what, numfmts, area=None, anchor=None, rows=None, select=True):
         """Paste the copied cells. what: "all" (formulas, constants and formats), "formulas" (formulas and constants),
         "values" or "formats"; numfmts: whether the copied number formats come too, or the destination keeps its own.
-        A copied cell brings its number format even when it is empty, and when it has it from its row or column.
-        Formats other than number formats are not modelled."""
+        A copied cell brings its number format and lock even when it is empty, and when it has them from its row or
+        column. Formats other than those are not modelled. The block is laid over `area` (the paste area by default)
+        as often as it fits, the copy's first cell on `anchor` (the area's top-left by default) and on every whole
+        block from it; `rows` (all of the area by default) are the rows it reaches."""
         dest, src = self.sheet, clip.sheet
-        r1, c1, r2, c2 = self._paste_area(clip)
+        area = area or self._paste_area(clip)
+        r1, c1, r2, c2 = area
+        ar, ac = anchor or (r1, c1)
+        rows = self._paste_rows(clip, area) if rows is None else rows
+        if dest.protects():  # unlocked cells of a protected sheet take what is pasted, but not its formats
+            dest.guard("contents", [(r, c1, r, c2) for r in rows])
+            if what == "all":
+                what, numfmts = "formulas", False
+            elif what == "formats" or numfmts:
+                raise VBANotImplemented("pasting number formats onto a protected sheet (unverified)")
+        height, width = len(clip.rows), clip.c2 - clip.c1 + 1
         if what in ("all", "formats"):
             self.app.note("FORMATS-NOT-MODELLED")
         formats = numfmts or what in ("all", "formats")
-        dcol = c1 - clip.c1
         whole_rows = clip.c1 == 1 and clip.c2 == MAX_COL
+
+        def across(offset):
+            """The columns of the area where a copied column (its offset in the copy) lands."""
+            c = c1 + (ac + offset - c1) % width
+            return range(c, c2 + 1, width)
+
         src.fresh()
         copied = []  # the copied rows as they are now: a paste onto the copied cells must not read what it wrote
         for r in clip.rows:
             cells = {c: cell.copy() for c, cell in src.rows.get(r, {}).items() if clip.c1 <= c <= clip.c2}
             if what == "values" and any(cell.value is PENDING for cell in cells.values()):
                 src.raw_value(r, next(c for c, cell in cells.items() if cell.value is PENDING))  # raises: unknown
-            row_format = (src.row_formats[r],) if r in src.row_formats else ()
-            copied.append((r, cells, row_format))
-        # where a cell with no record still has a format on either sheet, the paste may have to give it one
-        formatted = {c + dcol for c in src.col_formats if clip.c1 <= c <= clip.c2} | {
-            c for c in dest.col_formats if c1 <= c <= c2
-        }
+            copied.append((r, cells, src.row_style(r)))
+        # where a cell with no record still has a style on either sheet, the paste may have to give it one
+        styled_src = [c - clip.c1 for c in {*src.col_formats, *src.col_unlocked} if clip.c1 <= c <= clip.c2]
+        formatted = {c for o in styled_src for c in across(o)}
+        formatted |= {c for c in {*dest.col_formats, *dest.col_unlocked} if c1 <= c <= c2}
         if whole_rows:
             self.app.note("PASTE-WHOLE-ROWS")
         pasted_formulas = []
-        for i, (src_r, cells, row_format) in enumerate(copied):
-            dr = r1 + i
+        for dr in rows:
+            src_r, cells, row_style = copied[(dr - ar) % height]
             if what != "formats":
                 dest.book.forget_formulas(dest, dr, c1, dr, c2)
             old = dest.rows.get(dr, {})
-            columns = {c + dcol for c in cells} | {c for c in old if c1 <= c <= c2}
+            columns = {c for sc in cells for c in across(sc - clip.c1)} | {c for c in old if c1 <= c <= c2}
             if formats:
                 columns |= formatted
-                if (row_format or dr in dest.row_formats) and not whole_rows:
+                if (row_style is not None or dr in dest.row_formats) and not whole_rows:
                     columns |= set(range(c1, c2 + 1))
-            had = {c: old[c].numfmt if c in old else dest.inherited_format(dr, c) for c in columns}
-            if formats and whole_rows:  # the row's own format comes with it
+            had = {c: old[c].style if c in old else dest.inherited(dr, c) for c in columns}
+            if formats and whole_rows:  # the row's own style comes with it
                 dest.row_formats.pop(dr, None)
-                if row_format:
-                    dest.row_formats[dr] = row_format[0]
+                dest.row_unlocked.discard(dr)
+                if row_style is not None:
+                    dest._set_row_style(dr, row_style)
             row = {c: cell for c, cell in old.items() if not c1 <= c <= c2}
             for c in columns:
-                cell, prev = cells.get(c - dcol), old.get(c)
+                sc = clip.c1 + (c - ac) % width
+                cell, prev = cells.get(sc), old.get(c)
                 if not formats:
-                    numfmt = had[c]
+                    style = had[c]
                 elif cell is not None:
-                    numfmt = cell.numfmt
+                    style = cell.style
                 else:
-                    numfmt = row_format[0] if row_format else src.col_formats.get(c - dcol)
+                    style = row_style if row_style is not None else src.col_style(sc)
                 value = formula = None
                 if what == "formats":
                     value, formula = (prev.value, prev.formula) if prev is not None else (None, None)
@@ -634,11 +894,11 @@ class Range(VBAObject):
                 elif cell is not None:
                     value, formula = cell.value, cell.formula
                     if formula is not None:
-                        formula = shift_formula(formula, dr - src_r, dcol)
-                        value = PENDING if (dr - src_r or dcol) else value
+                        formula = shift_formula(formula, dr - src_r, c - sc)
+                        value = PENDING if (dr - src_r or c - sc) else value
                         pasted_formulas.append((dr, c, formula))
-                if value is not None or formula is not None or numfmt != dest.inherited_format(dr, c):
-                    row[c] = Cell(value, formula, numfmt)
+                if value is not None or formula is not None or style != dest.inherited(dr, c):
+                    row[c] = Cell(value, formula, *style)
             if row:
                 dest.rows[dr] = row
             else:
@@ -648,15 +908,168 @@ class Range(VBAObject):
                 dest.book.cells_changed(dest, dr, c1, dr, c2)
         for dr, c, formula in pasted_formulas:
             dest.book.register_formula(dest, dr, c, formula, False)
-        if dest is dest.book.active:
-            dest.sel = (r1, c1, r2, c2)
+        if select and dest is dest.book.active:
+            dest.sel = area
             dest.active_cell = (r1, c1)
+
+    # --- filling ---
+    def _fill(self, step_r, step_c):
+        """FillDown (1, 0), FillUp (-1, 0), FillRight (0, 1), FillLeft (0, -1): the range's first row (its last,
+        its first column, its last) copied into the rest of it, formulas moved, formats too. A range one row deep
+        fills from the row above it (and so on); none on the sheet's edge is error 1004. On a filtered sheet the
+        rows the filter shows are filled."""
+        self._single_sheet_target("a fill")
+        r1, c1, r2, c2 = self.rect
+        if step_r:
+            edge = r1 if step_r == 1 else r2
+            if r1 == r2:
+                edge -= step_r
+                if not 1 <= edge <= MAX_ROW:
+                    raise VBARuntimeError(1004, "Fill method of Range class failed")
+            else:
+                r1, r2 = (r1 + 1, r2) if step_r == 1 else (r1, r2 - 1)
+            source = (edge, c1, edge, c2)
+        else:
+            edge = c1 if step_c == 1 else c2
+            if c1 == c2:
+                edge -= step_c
+                if not 1 <= edge <= MAX_COL:
+                    raise VBARuntimeError(1004, "Fill method of Range class failed")
+            else:
+                c1, c2 = (c1 + 1, c2) if step_c == 1 else (c1, c2 - 1)
+            source = (r1, edge, r2, edge)
+        self.sheet.check_merged(r1, c1, r2, c2)
+        clip = Clipboard(self.sheet, list(range(source[0], source[2] + 1)), source[1], source[3])
+        area = (r1, c1, r2, c2)
+        rows = [r for a in Range(self.sheet, *area)._written_areas() for r in range(a[0], a[2] + 1)]
+        self._paste(clip, "all", True, area=area, anchor=source[:2], rows=rows, select=False)
+        return True
+
+    def m_filldown(self):
+        return self._fill(1, 0)
+
+    def m_fillup(self):
+        return self._fill(-1, 0)
+
+    def m_fillright(self):
+        return self._fill(0, 1)
+
+    def m_fillleft(self):
+        return self._fill(0, -1)
+
+    def m_autofill(self, destination=None, type=None):
+        """AutoFill: the destination holds this range and runs on from it one way; the range is laid down over the
+        rest, line by line (each column of a fill down, each row of a fill across). A line of formulas and blank
+        cells repeats; so does any line with xlFillCopy. A cell filled alone is copied (a date counts on by days);
+        a number alone in its line of a larger range counts on by 1; two numbers or more go on along their trend
+        (least squares). Text that counts on (Item 1, Q1, months and weekdays) is not modelled."""
+        if not isinstance(destination, Range):
+            raise VBARuntimeError(1004, "AutoFill method of Range class failed")
+        kind = FILL_DEFAULT if type is None else to_long(type)
+        if kind not in (FILL_DEFAULT, FILL_COPY, FILL_SERIES, FILL_FORMATS, FILL_VALUES, FILL_DAYS):
+            raise VBANotImplemented(f"AutoFill Type:={kind}")
+        dest, sheet = destination, self.sheet
+        self._single_sheet_target("AutoFill")
+        r1, c1, r2, c2 = self.rect
+        failed = VBARuntimeError(1004, "AutoFill method of Range class failed")
+        if dest.sheet is not sheet or not (dest.r1 <= r1 and r2 <= dest.r2 and dest.c1 <= c1 and c2 <= dest.c2):
+            raise failed
+        down = (dest.c1, dest.c2) == (c1, c2) and (dest.r1 == r1) != (dest.r2 == r2)
+        across = (dest.r1, dest.r2) == (r1, r2) and (dest.c1 == c1) != (dest.c2 == c2)
+        if not (down or across):
+            if dest.rect == self.rect or (dest.r1, dest.r2) != (r1, r2) and (dest.c1, dest.c2) != (c1, c2):
+                if dest.rect == self.rect or not (dest.r1 == r1 and dest.c1 == c1):
+                    raise failed
+                raise VBANotImplemented("AutoFill into a range that runs on from the source both down and across")
+            raise failed
+        if down:
+            area = (r2 + 1, c1, dest.r2, c2) if dest.r1 == r1 else (dest.r1, c1, r1 - 1, c2)
+        else:
+            area = (r1, c2 + 1, r2, dest.c2) if dest.c1 == c1 else (r1, dest.c1, r2, c1 - 1)
+        hidden = sheet.hidden_rows - sheet.manual_hidden if sheet.in_filter_mode() else ()
+        if any(area[0] <= r <= area[2] for r in hidden):
+            raise VBANotImplemented("AutoFill into rows a filter hides (Excel fills nothing)")
+        sheet.check_merged(*dest.rect)
+        series = {} if kind in (FILL_COPY, FILL_FORMATS) else self._series(down, kind, area)
+        what, numfmts = {FILL_FORMATS: ("formats", True), FILL_VALUES: ("formulas", False)}.get(kind, ("all", True))
+        clip = Clipboard(sheet, list(range(r1, r2 + 1)), c1, c2)
+        self._paste(clip, what, numfmts, area=area, anchor=(r1, c1), select=False)
+        for (r, c), value in series.items():
+            sheet.put(r, c, value)
+        if series:
+            self.app.note("AUTOFILL-SERIES")
+        return True
+
+    def _series(self, down, kind, area):
+        """{cell of the area: value} for the lines of the source that count on rather than repeat."""
+        sheet = self.sheet.fresh()
+        r1, c1, r2, c2 = self.rect
+        single = (r1, c1) == (r2, c2)
+        lines = range(c1, c2 + 1) if down else range(r1, r2 + 1)
+        out = {}
+        for line in lines:
+            cells = [(r, line) for r in range(r1, r2 + 1)] if down else [(line, c) for c in range(c1, c2 + 1)]
+            kinds = [self._fill_kind(sheet, r, c) for r, c in cells]
+            numbers = [i for i, k in enumerate(kinds) if k == "number"]
+            if kind == FILL_SERIES:
+                if len(cells) != 1 or kinds[0] != "number":
+                    raise VBANotImplemented("AutoFill xlFillSeries of anything but one number to a line")
+                values = _counting(sheet.raw_value(*cells[0]), 0, 1)
+            elif kind == FILL_DAYS:
+                if len(cells) != 1 or kinds[0] != "date":
+                    raise VBANotImplemented("AutoFill xlFillDays of anything but one date to a line")
+                values = _counting(sheet.raw_value(*cells[0]), 0, 1)
+            elif set(kinds) <= {"formula", "blank", "text", "other"}:
+                if "text" in kinds:
+                    self.app.note("AUTOFILL-TEXT-COPIED")
+                continue  # it repeats
+            elif {"digits", "listed", "time"} & set(kinds):
+                found = next(k for k in kinds if k in ("digits", "listed", "time"))
+                raise VBANotImplemented(f"AutoFill of a series Excel makes of {'text' if found != 'time' else 'times'}")
+            elif "date" in kinds:
+                if not single:
+                    raise VBANotImplemented("AutoFill of dates in a range of more than one cell")
+                values = _counting(sheet.raw_value(*cells[0]), 0, 1)
+            elif single:
+                continue  # one number filled alone is copied
+            elif len(numbers) == 1 and set(kinds) <= {"number", "formula", "blank"}:
+                values = _counting(sheet.raw_value(*cells[numbers[0]]), numbers[0], len(cells))
+            elif len(numbers) == len(cells):
+                values = _trend([sheet.raw_value(*cell) for cell in cells])
+            else:
+                raise VBANotImplemented("AutoFill of a line that mixes numbers with text or with other numbers")
+            positions = range(area[0], area[2] + 1) if down else range(area[1], area[3] + 1)
+            start = r1 if down else c1
+            for at in positions:
+                value = values(at - start)
+                if value is not None:
+                    out[(at, line) if down else (line, at)] = value
+        return out
+
+    @staticmethod
+    def _fill_kind(sheet, r, c):
+        cell = sheet.get_cell(r, c)
+        if cell is None or (cell.value is None and cell.formula is None):
+            return "blank"
+        if cell.formula is not None:
+            return "formula"
+        v = sheet.raw_value(r, c)
+        if isinstance(v, (bool, XLError)):
+            return "other"
+        if isinstance(v, float):
+            if is_date_format(cell.numfmt):
+                return "date"
+            return "time" if is_time_format(cell.numfmt) else "number"
+        if any(ch.isdigit() for ch in v):
+            return "digits"
+        return "listed" if v.strip().lower() in _LISTED else "text"
 
     # --- filters ---
     def m_autofilter(
         self, field=None, criteria1=None, operator=None, criteria2=None, visibledropdown=None, subfield=None
     ):
         sheet = self.sheet
+        sheet.guard("filter")
         af = sheet.autofilter
         if field is None and criteria1 is None and operator is None and criteria2 is None:
             if af is not None:

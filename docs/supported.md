@@ -3,7 +3,7 @@
 MacroPress models the parts of VBA and Excel that macros behind buttons use. Anything outside this list stops the
 button with `stopped: not modelled` and a message naming what was missing, rather than being skipped or guessed.
 
-What is modelled is checked against Excel itself: [tests/parity](../tests/parity) holds about a thousand small macros
+What is modelled is checked against Excel itself: [tests/parity](../tests/parity) holds over a thousand small macros
 with the answers Excel gave, and every test run compares MacroPress's answers with them. Where MacroPress knowingly
 differs from Excel, a run that meets the difference says so in its report, under `unverified_behaviours`;
 [macropress/ledger.py](../macropress/ledger.py) lists them all.
@@ -65,18 +65,18 @@ Some come with limits, and stop the run outside them:
 | Object | Members |
 | --- | --- |
 | Application (and the globals) | ActiveCell, ActiveSheet, ActiveWorkbook, Calculate, Calculation, Cells, Columns, CutCopyMode, DisplayAlerts, DisplayStatusBar, EnableEvents, Intersect, Range, Rows, ScreenUpdating, Selection, Sheets, StatusBar, ThisWorkbook, Wait, Workbooks, WorksheetFunction, Worksheets |
-| Workbook | Activate, ActiveSheet, Name, Names, Save (the copy is saved when the run ends), Sheets, Worksheets |
+| Workbook | Activate, ActiveSheet, Name, Names, Protect, ProtectStructure, ProtectWindows, Save (the copy is saved when the run ends), Sheets, Unprotect, Worksheets |
 | Sheets, Worksheets | Count, Item, Select (selecting several sheets groups them, as in Excel) |
-| Worksheet | Activate, AutoFilterMode, Calculate, Cells, CodeName, Columns, FilterMode, Index, Name (renaming a sheet updates the formulas and names that refer to it), Parent, Range, Rows, Select, ShowAllData, Sort, UsedRange, Visible (read only) |
-| Range | Activate, Address, AutoFilter, AutoFit (does nothing: widths are not modelled), Calculate, Cells, Clear, ClearContents, Column, Columns, Copy, Count, CurrentRegion, End, EntireColumn, EntireRow, Formula, Formula2, Hidden, Item, NumberFormat (read only), Offset, Parent, PasteSpecial, Resize, Row, Rows, Select, Sort, Text, Value, Value2, Worksheet |
+| Worksheet | Activate, AutoFilterMode, Calculate, Cells, CodeName, Columns, FilterMode, Index, Name (renaming a sheet updates the formulas and names that refer to it), Parent, Paste, Protect, ProtectContents, ProtectDrawingObjects, Protection (its Allow... options), ProtectionMode, ProtectScenarios, Range, Rows, Select, ShowAllData, Sort, Unprotect, UsedRange, Visible |
+| Range | Activate, Address, AutoFill, AutoFilter, AutoFit (does nothing: widths are not modelled), Calculate, Cells, Clear, ClearContents, Column, Columns, Copy, Count, CurrentRegion, Cut, End, EntireColumn, EntireRow, FillDown, FillLeft, FillRight, FillUp, Formula, Formula2, Formula2R1C1, FormulaR1C1, Hidden, Item, Locked, NumberFormat, Offset, Parent, PasteSpecial, Resize, Row, Rows, Select, Sort, Text, Value, Value2, Worksheet |
 | Sort (Worksheet.Sort) | SortFields (Add, Add2, Clear, Count), SetRange, Header, MatchCase, Orientation, SortMethod, Apply |
 | Name | Name, RefersTo, RefersToRange |
 | WorksheetFunction | CountA, Find, Max, Min, Search, Sum, XLookup |
 
-Within those, a few cases stop the run: `PasteSpecial` with `Transpose`, `SkipBlanks` or an `Operation`, or into a
-range of another size; `Sort` by colour, with a custom order or left to right; `AutoFilter` with criteria other than
-values, comparisons and wildcards; `Address` in R1C1 style; `XLookup` and `VLOOKUP` with approximate matching; and
-ranges with several areas (`Range("A1:B2,D1:D5")`, `Union`).
+Within those, a few cases stop the run: `PasteSpecial` with `Transpose`, `SkipBlanks` or an `Operation`; `Sort` by
+colour, with a custom order or left to right; `AutoFilter` with criteria other than values, comparisons and wildcards;
+`Address` in R1C1 style; `XLookup` and `VLOOKUP` with approximate matching; ranges with several areas
+(`Range("A1:B2,D1:D5")`, `Union`); and the cases of number formats, protection, fills and cuts listed below.
 
 ## Cells and their number formats
 
@@ -85,22 +85,71 @@ ranges with several areas (`Range("A1:B2,D1:D5")`, `Union`).
   `" TRUE"` stay text; a leading apostrophe keeps anything as text. Text that Excel would turn into a date or a time
   (`"1/2"`, `"Jan 5"`, `"3:30"`) stops the run, because Excel reads it by the machine's regional settings. Write a
   `Date` value instead (`DateSerial(2024, 1, 5)`).
-- **Number formats are read, not set.** The formats of cells, rows and columns in the workbook decide what VBA reads
-  and what a write leaves. `Value` gives a `Date` for a format that shows a day, a month or a year, a `Double` for a
+- **Number formats** decide what VBA reads and what a write leaves, whether the workbook brought them or a macro set
+  them. `Value` gives a `Date` for a format that shows a day, a month or a year, a `Double` for a
   time alone, and a `Currency` (four decimals) for Excel's own currency formats; `Value2` gives the bare number. A
   cell formatted as Text keeps what is written to it as text. A write replaces one of Excel's own formats of another
   kind (a date written to a cell of percentages) and leaves a plain number format, or one made by hand, in place.
   `Clear` resets the format, `ClearContents` keeps it, and a copy brings it along.
+- **Setting `NumberFormat`** gives the code as Excel reads it: `general` is General, the letters of a date are
+  lower-cased (`MM/DD/YYYY` reads back `mm/dd/yyyy`), colours and `AM/PM` are spelled Excel's way, `"$"` becomes a bare
+  `$`, and a code Excel cannot read (`[Red`, five sections, `0.00e+00`) is error 1004. A code with letters Excel reads
+  its own way (`abc` becomes `\abbc`, `0.00 kg` is refused) stops the run. A whole row, column or sheet takes the
+  format itself, so that cells written there later have it; a range that runs to the sheet's last row formats its
+  columns, and its cells above keep theirs. Several cells with different formats read as `Null`, and rows and columns
+  formatted whole count in `UsedRange`. `Locked` is set and read the same way. `NumberFormatLocal`, `Style` and an
+  array of formats stop the run.
 - **`Text`** gives what the cell shows for text, for the General format and for plain number formats (`0.00`,
   `#,##0.00`). It stops the run for any other format, and wherever the column's width would decide what shows:
   Excel rounds a number that does not fit, or shows `####`.
-- **A filtered range**: a value, an array or a clear reaches only the rows the filter shows, as in Excel, and a
-  filter matches the text each cell shows (`1,250.00`, not `1250`), without regard to case or to the spaces around it.
+- **A filtered range**: a value, an array, a clear, a number format or a fill reaches only the rows the filter shows,
+  as in Excel, and so does one cell copied over it; a block of cells pasted there lands whole. A filter matches the
+  text each cell shows (`1,250.00`, not `1250`), without regard to case or to the spaces around it.
+
+## Protection and hidden sheets
+
+- **A protected sheet**, protected in the file or by the macro, refuses what Excel refuses, with error 1004: a write
+  to a locked cell (a value written over locked and unlocked cells reaches the unlocked ones first), a clear, paste or
+  fill touching one, a number format (unless `AllowFormattingCells`), `Locked`, hiding rows or columns (unless
+  `AllowFormattingRows` or `AllowFormattingColumns`), sorting (unless `AllowSorting`, and never locked cells) and the
+  `AutoFilter` method, whatever `AllowFiltering` says. A paste, fill or `Clear` into unlocked cells changes their
+  contents and leaves their formats. `UserInterfaceOnly:=True` lets macros change anything, for the rest of the run,
+  as it holds in Excel until the workbook closes.
+- **Passwords** are checked against the hash the file keeps, in either of the two forms Excel writes. `Unprotect`
+  without the password of a sheet that has one asks for it, as Excel does: pass the answer with `--answer`. A
+  password the macro sets is saved as Excel saves one (salted SHA-512), and a protection given back just as it was
+  keeps the file's own. `Protect` again on a protected sheet takes the options it is given and keeps the password,
+  except with other options and another password, which stops the run.
+- **`Workbook.Protect`** locks the structure: renaming, hiding and showing sheets are error 1004.
+- **`Visible`**: `False` or `0` hides a sheet, `xlSheetVeryHidden` hides it from the user's own Unhide, `True`, `-1` or
+  `1` shows it; anything else is error 1004, as is hiding the last sheet shown. Hiding the active sheet makes the next
+  sheet shown to its right active, else the one to its left. A hidden sheet is read and written as usual; activating
+  or selecting it is error 1004, as in Excel for Windows.
+
+## Filling, copying and moving cells
+
+- **`FillDown`, `FillUp`, `FillRight`, `FillLeft`** copy the range's first row (last row, first column, last column)
+  into the rest of it: values, formulas with their references moved, and formats. A range one row deep fills from the
+  row above it, and on the sheet's edge is error 1004.
+- **A copy onto a larger range** repeats the copied block where the range holds it a whole number of times down and
+  across (a range one cell high or wide counts as holding it); any other range takes the block once, from its first
+  cell. `Worksheet.Paste` pastes what was copied into its destination or the selection.
+- **`AutoFill`**: a line of formulas and blank cells repeats, as does any line with `xlFillCopy`; a cell filled alone
+  is copied, a date counts on by days, a number alone in its line of a larger range counts on by 1, and two numbers
+  or more go on along their least-squares trend. `xlFillFormats`, `xlFillValues`, `xlFillSeries` and `xlFillDays`
+  behave as in Excel. Text that counts on (`Item 1`, `Q1`, month and weekday names), a destination that runs on both
+  down and across, and rows a filter hides stop the run.
+- **`Cut`** moves the cells, contents and formats, and leaves them empty and General; every formula and defined name
+  that reads them reads them where they are now, one that read the cells they landed on reads `#REF!`, and one that
+  read part of a range they belong to is left as it was. A cut on a protected sheet, of part of a filter's range, a
+  table or an array formula, of whole rows or columns that are hidden or formatted whole, or that moves the end of a
+  range along it (Excel stretches the range) or part of it to another sheet, stops the run. So does saving a copy
+  whose conditional formats, validation, hyperlinks or charts cover the cells moved: those parts are not rewritten.
 
 Not modelled: `Range.Delete` and `Range.Insert` (moving cells would have to move every reference to them),
 `Range.Find`, `Range.SpecialCells`, `Sheets.Add`, `Workbooks.Add`, `Workbooks.Open`, `Workbook.SaveAs`,
-`Workbook.Close`, `Application.Run`, setting any format (`NumberFormat`, `Font`, `Interior`, `Borders`), charts,
-pivot tables, shapes and comments.
+`Workbook.Close`, `Application.Run`, formats other than number formats and `Locked` (`Font`, `Interior`, `Borders`,
+`ColumnWidth`), charts, pivot tables, shapes and comments.
 
 ## Formulas
 
@@ -118,6 +167,11 @@ Functions: ABS, AND, AVERAGE, CONCAT, COUNT, COUNTA, IF, IFERROR, INDEX, INT, IS
 LOWER, MATCH (exact), MAX, MID, MIN, NOT, NOW, OR, RIGHT, ROUND, SORT, SUM, TODAY, TRIM, UNIQUE, UPPER, VLOOKUP
 (exact), XLOOKUP (exact). Arithmetic, comparison and `&` operators, references to other sheets, defined names, whole
 rows and columns, and dynamic arrays that spill (`UNIQUE`, `SORT`) are all calculated.
+
+Formulas can be written and read R1C1 style (`FormulaR1C1`, `Formula2R1C1`): one text written to many cells gives
+each its own formula, and a relative reference that runs off the sheet comes round from its other edge, as in Excel.
+`Formula` reads R1C1 text too where A1 style cannot (`=R1C1`). An A1 reference given to `FormulaR1C1`, which Excel
+turns into a name that cannot exist (`='A1'+1`), stops the run.
 
 A formula using any other function (`SUMIF`, `COUNTIF`, `SUMPRODUCT`, `INDIRECT`, ...), an array constant
 (`{1,2,3}`), arithmetic on a whole range (`=A1:A3*2`), or text that Excel would read by regional settings (a date, a

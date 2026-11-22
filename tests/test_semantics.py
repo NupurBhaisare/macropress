@@ -150,7 +150,7 @@ class ErrorHandling(Runner):
         # cover, is "not modelled", which On Error does not skip
         for body in (
             'Range("A1:B3").SpecialCells(4).Select',
-            'Range("A1").NumberFormat = "0.00"',
+            'Range("A1").NumberFormatLocal = "0.00"',
             'Set o = CreateObject("Scripting.Dictionary")',
             'Shell "notepad.exe"',
             'x = Dir("*.xlsx")',
@@ -467,6 +467,71 @@ class ExcelModel(Runner):
             self.prints('Range("A1").Formula = "=1E+308*10"')
         self.assertEqual(ctx.exception.number, 1004)
 
+    def test_a_number_format_is_read_as_excel_reads_it_and_given_to_cells_rows_and_columns(self):
+        codes = ["general", "MM/DD/YYYY", "[red]0.00", "h:mm am/pm", '"$"#,##0.00', "", '0.00;-0.00;"-"']
+        body = "\n".join(
+            f'Range("A{i}").NumberFormat = "{c.replace(chr(34), chr(34) * 2)}"\nDebug.Print Range("A{i}").NumberFormat'
+            for i, c in enumerate(codes, 1)
+        )
+        self.assertEqual(
+            self.prints(body),
+            ["General", "mm/dd/yyyy", "[Red]0.00", "h:mm AM/PM", "$#,##0.00", "General", '0.00;-0.00;"-"'],
+        )
+        for code in ("[Red", "0;0;0;0;0", "0.00e+00", '"abc'):  # codes Excel cannot read
+            with self.assertRaises(VBARuntimeError) as ctx:
+                self.prints(f'Range("A1").NumberFormat = "{code.replace(chr(34), chr(34) * 2)}"')
+            self.assertEqual(ctx.exception.number, 1004)
+        with self.assertRaisesRegex(VBANotImplemented, "how Excel reads"):  # "abc" becomes \abbc: letters not modelled
+            self.prints('Range("A1").NumberFormat = "abc"')
+        body = (
+            'Rows(3).NumberFormat = "0%"\nColumns("C").NumberFormat = "0.00"\nRows(5).NumberFormat = "0.000"\n'
+            'Range("C7").Value = 1.5\nRange("A9").Value = 45296\nRange("A9").NumberFormat = "yyyy-mm-dd"\n'
+            'Debug.Print Range("C3").NumberFormat, Range("A3").NumberFormat, Range("C5").NumberFormat, Range("C7").Text\n'
+            'Debug.Print IsNull(Columns("C").NumberFormat), IsNull(Range("A1:A2").NumberFormat), TypeName(Range("A9").Value)\n'
+            'Range("E2:E1048576").NumberFormat = "0.0"\nRange("B4:C4").Locked = False\n'
+            'Debug.Print Range("E1").NumberFormat, Range("E999").NumberFormat, Range("B4").Locked, IsNull(Range("A4:B4").Locked)\n'
+            "Debug.Print ActiveSheet.UsedRange.Address"
+        )
+        # a column formatted after a row wins where they cross, and a row after a column; a range down to the last row
+        # formats the column, its cells above keeping theirs; formatted rows and columns count as used
+        self.assertEqual(
+            self.prints(body),
+            ["0.00 0% 0.000 1.50", "True False Date", "General 0.0 False True", "$A$1:$E$9"],
+        )
+
+    def test_a_protected_sheet_refuses_what_excel_refuses_and_its_password_is_asked_for(self):
+        body = (
+            'Range("B1:B2").Locked = False\nRange("B1").NumberFormat = "0.00"\nActiveSheet.Protect "pw"\nOn Error Resume Next\n'
+            'Range("A1:B1").Value = 7\nDebug.Print Err.Number, Range("A1").Value, Range("B1").Value\nErr.Clear\n'
+            'Range("A1").ClearContents\nDebug.Print Err.Number\nErr.Clear\nRange("B2").NumberFormat = "0.00"\n'
+            "Debug.Print Err.Number\nErr.Clear\nRows(3).Hidden = True\nDebug.Print Err.Number\nErr.Clear\n"
+            'Range("B1").Copy Range("B2")\nDebug.Print Err.Number, Range("B2").Value, Range("B2").NumberFormat\nErr.Clear\n'
+            'ActiveSheet.Unprotect "wrong"\nDebug.Print Err.Number, ActiveSheet.ProtectContents\nErr.Clear\n'
+            'ActiveSheet.Protect "other"\nActiveSheet.Unprotect "pw"\nDebug.Print Err.Number, ActiveSheet.ProtectContents\n'
+            'ActiveSheet.Protect "pw", UserInterfaceOnly:=True\nRange("A1").Value = 8\nActiveSheet.Unprotect "pw"\n'
+            'Debug.Print Err.Number, Range("A1").Value, ActiveSheet.ProtectionMode'
+        )
+        # a value written over locked and unlocked cells reaches the unlocked ones and is error 1004; a paste into
+        # unlocked cells brings no formats; a second Protect that changes nothing keeps the password
+        self.assertEqual(
+            self.prints(body), ["1004  7", "1004", "1004", "1004", "0 7 General", "1004 True", "0 False", "0 8 True"]
+        )
+        ask = 'ActiveSheet.Protect "pw"\nActiveSheet.Unprotect\nDebug.Print ActiveSheet.ProtectContents'
+        self.assertEqual(self.prints(ask, answers=["pw"]), ["False"])
+        with self.assertRaisesRegex(VBANotImplemented, "Excel asks for the password"):
+            self.prints(ask)
+        body = (
+            'Sheets("Two").Activate\nSheets("Two").Visible = False\nDebug.Print ActiveSheet.Name, Sheets("Two").Visible\n'
+            'Sheets("Three").Visible = xlSheetVeryHidden\nOn Error Resume Next\nSheets("One").Visible = False\n'
+            'Debug.Print Err.Number, Sheets("One").Visible\nErr.Clear\nSheets("Two").Visible = "True"\nDebug.Print Err.Number\n'
+            'Err.Clear\nThisWorkbook.Protect "pw"\nSheets("Two").Visible = True\nSheets("One").Name = "X"\n'
+            'Debug.Print Err.Number, Sheets("Two").Visible, ThisWorkbook.ProtectStructure'
+        )
+        # the active sheet hidden: the next one shown takes its place; the last one shown cannot be hidden
+        self.assertEqual(
+            self.prints(body, sheets=("One", "Two", "Three")), ["Three 0", "1004 -1", "1004", "1004 0 True"]
+        )
+
     def test_a_filter_matches_what_cells_show_and_a_write_reaches_only_the_rows_it_shows(self):
         code = (
             "Function Shown() As String\nFor i = 2 To 7\nShown = Shown & IIf(Rows(i).Hidden, 0, 1)\nNext\nEnd Function\n"
@@ -715,7 +780,78 @@ class MovingFormulas(Runner):
         ]
         self.assertEqual(out, expected)
 
-    def test_moving_off_the_sheet_or_into_another_size_is_refused(self):
+    def test_a_formula_written_r1c1_style_is_each_cells_own_and_comes_round_the_sheets_edges(self):
+        body = (
+            'Range("D5").Formula = "=A1+B$2+$A1+$C$3+SUM(A:A)+SUM($1:$2)+SUM(D4:D4)"\nDebug.Print Range("D5").FormulaR1C1\n'
+            'Range("F2:G3").FormulaR1C1 = "=R1C[-4]+R[-1]C1+\'My sheet\'!RC"\nDebug.Print Range("G3").Formula\n'
+            'Range("A1").FormulaR1C1 = "=R[-1]C+RC[-1]"\nRange("B1").Formula = "=R[1]C*2"\nRange("B2").FormulaR1C1 = "=r1c1&""R1C1"""\n'
+            'Debug.Print Range("A1").Formula, Range("B1").Formula, Range("B2").Formula, Range("C1").FormulaR1C1'
+        )
+        self.assertEqual(
+            self.prints(body, sheets=("Sheet1", "My sheet")),
+            [
+                "=R[-4]C[-3]+R2C[-2]+R[-4]C1+R3C3+SUM(C[-3])+SUM(R1:R2)+SUM(R[-1]C:R[-1]C)",
+                "=C$1+$A2+'My sheet'!G3",
+                '=A1048576+XFD1 =B2*2 =$A$1&"R1C1" ',  # off the sheet: round from the other edge; Formula takes R1C1
+            ],
+        )
+        with self.assertRaises(VBARuntimeError) as ctx:
+            self.prints('Range("A1").FormulaR1C1 = "=R1C16385"')
+        self.assertEqual(ctx.exception.number, 1004)
+        with self.assertRaisesRegex(VBANotImplemented, "an A1 reference"):  # Excel makes it a name: ='A1'+1
+            self.prints('Range("A1").FormulaR1C1 = "=A1+1"')
+
+    def test_fills_copy_the_first_row_and_autofill_repeats_or_counts_on_as_excel_does(self):
+        body = (
+            'Range("A1").Value = 5\nRange("B1").Formula = "=A1*2"\nRange("A1").NumberFormat = "0.00"\nRange("A1:B3").FillDown\n'
+            'Range("A5").Value = 8\nRange("A6").FillDown\nRange("D1").Formula = "=D2+1"\nRange("D2").Value = 1\nRange("C1:D1").FillLeft\n'
+            'Debug.Print Range("A3").Value, Range("A3").NumberFormat, Range("B3").Formula, Range("A6").Value, Range("C1").Formula\n'
+            'Range("F1").Value = 1\nRange("F2").Value = 2\nRange("F3").Value = 4\nRange("F1:F3").AutoFill Range("F1:F5")\n'
+            'Range("G1").Value = 7\nRange("G1").AutoFill Range("G1:G3")\nRange("H1").Formula = "=F1"\nRange("I1").Value = 3\n'
+            'Range("H1:I1").AutoFill Range("H1:I3")\nRange("J1").Value = DateSerial(2024, 1, 31)\nRange("J1").AutoFill Range("J1:J2")\n'
+            'Debug.Print Round(Range("F5").Value, 6), Range("G3").Value, Range("H3").Formula, Range("I3").Value, Range("J2").Value\n'
+            'On Error Resume Next\nRange("E1").FillDown\nDebug.Print Err.Number\nErr.Clear\nRange("A1").AutoFill Range("B1:B3")\n'
+            "Debug.Print Err.Number"
+        )
+        # one number filled alone is copied, one in a larger range counts on by 1, more go on along their trend
+        self.assertEqual(
+            self.prints(body),
+            ["5 0.00 =A3*2 8 =C2+1", "6.833333 7 =F3 5 2/1/2024", "1004", "1004"],
+        )
+        for text in ("Item 1", "Jan", "Monday"):
+            with self.assertRaisesRegex(VBANotImplemented, "series Excel makes of text"):
+                self.prints(f'Range("A1").Value = "{text}"\nRange("A1").AutoFill Range("A1:A3")')
+
+    def test_a_cut_moves_cells_and_the_formulas_that_read_them_follow(self):
+        body = (
+            'Range("A1").Value = 1\nRange("A2").Value = 2\nRange("A1").NumberFormat = "0.00"\nRange("B1").Formula = "=SUM(A1:A2)"\n'
+            'Range("B2").Formula = "=C1"\nRange("B3").Formula = "=SUM(A1:A5)"\nRange("B4").Formula = "=$A$1*10"\n'
+            'Range("A1:A2").Cut Range("C1")\nDebug.Print Range("B1").Formula, Range("B2").Formula, Range("B3").Formula, '
+            'Range("B4").Formula, Range("B4").Value\nDebug.Print IsEmpty(Range("A1").Value), Range("A1").NumberFormat, '
+            'Range("C1").NumberFormat, Application.CutCopyMode\n'
+            'Range("C2").Cut\nDebug.Print Application.CutCopyMode\nRange("E5").Select\nActiveSheet.Paste\n'
+            'Debug.Print Range("B1").Formula, Range("E5").Value, Application.CutCopyMode, Selection.Address\n'
+            'Range("G1").Value = 4\nRange("G2").Formula = "=G1*$G$1"\nRange("G1").Cut Sheets("Other").Range("A1")\n'
+            'Debug.Print Range("G2").Formula, Range("G2").Value'
+        )
+        # a reference to the cells cut follows them; one to the cells they land on is #REF!; one to part of a range
+        # stays; one to another sheet names it
+        self.assertEqual(
+            self.prints(body, sheets=("Sheet1", "Other")),
+            [
+                "=SUM(C1:C2) =#REF! =SUM(A1:A5) =$C$1*10 10",
+                "True General 0.00 0",
+                "2",
+                "=SUM(C1:C2) 2 0 $E$5",
+                "=Other!A1*Other!$A$1 16",
+            ],
+        )
+        with self.assertRaisesRegex(VBANotImplemented, "moves part of the range"):  # Excel stretches it: A1:A5
+            self.prints('Range("B1").Formula = "=SUM(A1:A3)"\nRange("A3").Cut Range("A5")')
+        with self.assertRaises(VBARuntimeError):
+            self.prints('Range("A1").Cut\nRange("B1").PasteSpecial xlPasteValues')
+
+    def test_moving_off_the_sheet_is_refused_and_a_copy_repeats_to_fill_a_larger_range(self):
         for body in (
             'Range("B1").Formula = "=A1"\nRange("B1").Copy Range("A1")',
             'Range("A2").Formula = "=A1"\nRange("A2").Copy Range("B1")',
@@ -726,8 +862,12 @@ class MovingFormulas(Runner):
         with self.assertRaises(VBARuntimeError) as ctx:
             self.prints('Range("A1:B1").Value = 1\nRange("A1:B1").Copy Range("XFD1")')
         self.assertEqual(ctx.exception.number, 1004)
-        with self.assertRaisesRegex(VBANotImplemented, "another size"):
-            self.prints('Range("A1").Value = 1\nRange("A1").Copy Range("B1:B3")')
+        # a copy onto a range of another size: repeated where it fits a whole number of times, else laid down once
+        body = (
+            'Range("A1").Value = 1\nRange("A2").Formula = "=A1+1"\nRange("A1:A2").Copy Range("C1:D4")\n'
+            'Range("A1:A2").Copy Range("F1:F3")\nDebug.Print Range("D4").Formula, Range("D4").Value, Range("F3").Formula'
+        )
+        self.assertEqual(self.prints(body), ["=D3+1 2 "])
 
 
 GROUPS = [ControlFlow, ErrorHandling, Values, Procedures, ExcelModel, MovingFormulas]

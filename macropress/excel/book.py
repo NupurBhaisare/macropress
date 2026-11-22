@@ -15,6 +15,7 @@ from ..values import (
 )
 from .addresses import col_letters, has_relative_reference
 from .constants import MAX_COL, MAX_ROW, PENDING
+from .protection import BookProtection, Password, check_password
 from .sheet import Sheet
 from .storage import Cell
 
@@ -35,6 +36,10 @@ def _cell_result(v):
     if isinstance(v, float) and not math.isfinite(v):
         return XLError("#NUM!")
     return v
+
+
+def _holds_something(cell):
+    return cell is not None and (cell.value is not None or cell.formula is not None)
 
 
 class FormulaInfo:
@@ -104,6 +109,10 @@ class Book(VBAObject):
         self.tables = {}  # lower name -> Table
         self.date1904 = False
         self.manual = False  # the calculation mode the file was saved in
+        self.protection = None  # BookProtection while the workbook is protected
+        self.protection_read = None  # the protection the file had, kept as it was if a macro gives it back
+        self.seed = b""  # what a new password's salt is made from: the file's own bytes, so a run can be repeated
+        self.moves = []  # cells cut and pasted: (sheet name, rect, sheet name, rect), for the save to check
         self.calc_on_save = True
         self.active = None
         self.selected = []
@@ -252,13 +261,12 @@ class Book(VBAObject):
                 self.cells_changed(sheet, *spill)
 
     def _drop_spill(self, sheet, anchor):
-        for cell in [k for k, a in sheet.spill_owner.items() if a == anchor]:
-            del sheet.spill_owner[cell]
-            row = sheet.rows.get(cell[0])
-            if row is not None:
-                row.pop(cell[1], None)
-                if not row:
-                    del sheet.rows[cell[0]]
+        """The cells a dynamic array filled are empty again; each keeps its own format, as it had it."""
+        for r, c in [k for k, a in sheet.spill_owner.items() if a == anchor]:
+            del sheet.spill_owner[(r, c)]
+            cell = sheet.rows.get(r, {}).get(c)
+            if cell is not None:
+                sheet._store(r, c, None, None, *cell.style)
 
     def cells_changed(self, sheet, r1, c1, r2, c2):
         """Cells of `sheet` in the rectangle changed: the formulas that read them (and so on) are now stale."""
@@ -429,8 +437,8 @@ class Book(VBAObject):
         elif (
             new[2] > MAX_ROW
             or new[3] > MAX_COL
-            or any(
-                (rr, cc) != (r, c) and sheet.rows.get(rr, {}).get(cc) is not None
+            or any(  # a cell that holds something is in the way; one that only has a format is not
+                (rr, cc) != (r, c) and _holds_something(sheet.rows.get(rr, {}).get(cc))
                 for rr in range(new[0], new[2] + 1)
                 for cc in range(new[1], new[3] + 1)
             )
@@ -443,8 +451,9 @@ class Book(VBAObject):
                         self.app.note("SPILL-BLANK-AS-ZERO")
                     if (i, j) == (0, 0):
                         cell.value = _cell_result(v)
-                    else:
-                        sheet.rows.setdefault(r + i, {})[c + j] = Cell(_cell_result(v), None, None)
+                    else:  # the cell keeps its format and lock
+                        style = sheet.style_at(r + i, c + j)
+                        sheet.rows.setdefault(r + i, {})[c + j] = Cell(_cell_result(v), None, *style)
                         sheet.spill_owner[(r + i, c + j)] = (r, c)
         sheet.spills[(r, c)] = new
         self._spill_writer = key
@@ -501,6 +510,42 @@ class Book(VBAObject):
 
     def m_save(self):
         return True
+
+    def m_protect(self, password=None, structure=None, windows=None):
+        """Protect the workbook's structure: its sheets cannot be added, deleted, renamed, hidden or shown."""
+        if windows is not None and bool(default_value(windows)):
+            raise VBANotImplemented("Workbook.Protect Windows:=True")
+        if self.protection is not None:
+            raise VBANotImplemented("protecting a protected workbook again (unverified)")
+        text = to_str(password) if password is not None else ""
+        structure = structure is None or bool(default_value(structure))
+        read = self.protection_read
+        if read is not None and (read.structure, read.windows) == (structure, False):
+            if read.password.matches(text, "workbook") if read.password is not None else not text:
+                self.protection = read  # protected again just as the file had it: the file keeps its own
+                return
+        self.protection = BookProtection(Password(text=text) if text else None, structure) if structure else None
+
+    def m_unprotect(self, password=None):
+        p = self.protection
+        if p is None:
+            return
+        if password is None and p.password is not None:  # Excel asks for it
+            password = self.app.ask("the password to unprotect the workbook")
+        if p.password is not None:
+            check_password(p.password, to_str(password), "workbook")
+        self.protection = None
+
+    def get_protectstructure(self):
+        return self.protection is not None and self.protection.structure
+
+    def get_protectwindows(self):
+        return self.protection is not None and self.protection.windows
+
+    def guard_structure(self, what):
+        """Error 1004 when the workbook's structure is protected: its sheets cannot be renamed, hidden or shown."""
+        if self.protection is not None and self.protection.structure:
+            raise VBARuntimeError(1004, f"Unable to {what}: the workbook is protected")
 
     def m_activate(self):
         return True

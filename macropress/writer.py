@@ -10,6 +10,7 @@ A cell's font, fill and borders are kept, whatever the macro did: a cleared cell
 """
 
 import copy
+import hashlib
 import math
 import os
 import re
@@ -19,6 +20,7 @@ from lxml import etree
 
 from .errors import VBANotImplemented
 from .excel import PENDING, area_text, col_letters, parse_area
+from .excel.addresses import moved_references
 from .formula import file_syntax, rename_sheets
 from .numfmt import BUILTIN_FORMATS, builtin_code
 from .values import XLError
@@ -151,13 +153,21 @@ def save_workbook(book, original_path, out_path):
         new_af = _af_desc(new.autofilter)
         selected = new in book.selected
         view_changed = (old.sel, old.active_cell, old in base.selected) != (new.sel, new.active_cell, selected)
-        if not (cells or old.hidden_rows != new.hidden_rows or old_af != new_af or view_changed):
+        lines = _changed_lines(old, new)
+        protection = _protection_change(book, old, new)
+        changed = cells or any(lines) or protection is not False or old_af != new_af or view_changed
+        if not (changed or old.hidden_rows != new.hidden_rows):
             continue
         patched[part] = _patch_sheet(
-            pkg.zip.read(part), old, new, cells, sst, selected, old_af != new_af, _default_cm(book), styles
-        )
+            pkg.zip.read(part), old, new, cells, sst, selected, old_af != new_af, _default_cm(book), styles, lines,
+            protection,
+        )  # fmt: skip
         if old_af != new_af:
             filter_refs[i] = new.autofilter
+    if book.moves:
+        if renamed:
+            raise VBANotImplemented("saving after cells were cut and sheets renamed in one run")
+        _check_moves(pkg, book, sheet_parts)
     patched["xl/workbook.xml"] = _patch_workbook(wb_root, base, book, pending_formulas, filter_refs, renamed)
     if styles is not None and styles.changed:
         patched["xl/styles.xml"] = etree.tostring(styles.root, xml_declaration=True, encoding="UTF-8", standalone=True)
@@ -178,10 +188,32 @@ def save_workbook(book, original_path, out_path):
     return sorted(p for p in patched if p.startswith("xl/worksheets/"))
 
 
+def locked_style(xf):
+    """Whether a cell style (an <xf>) locks its cells: it does unless its <protection> says locked="0"."""
+    protection = xf.find(q("protection")) if xf is not None else None
+    return protection is None or protection.get("locked") not in ("0", "false")
+
+
+def _set_locked(xf, locked):
+    protection = xf.find(q("protection"))
+    if locked:
+        if protection is not None:
+            protection.attrib.pop("locked", None)
+            if not protection.attrib:
+                xf.remove(protection)
+        return
+    if protection is None:
+        protection = etree.Element(q("protection"))
+        ext = xf.find(q("extLst"))
+        (ext.addprevious(protection) if ext is not None else xf.append(protection))
+    protection.set("locked", "0")
+    xf.set("applyProtection", "1")
+
+
 class _Styles:
-    """The workbook's cell styles. A written cell whose number format in the model is not its style's in the file (a
-    Date written to a General cell, a format pasted or cleared) gets a copy of its style with that format (its font,
-    fill and borders kept), made once for each style and format."""
+    """The workbook's cell styles. A cell, row or column whose number format or lock in the model is not its style's
+    in the file (a Date written to a General cell, a format set, pasted or cleared) gets a copy of its style with
+    that format and lock (its font, fill and borders kept), made once for each style, format and lock."""
 
     def __init__(self, xml):
         self.root = etree.fromstring(xml)
@@ -191,22 +223,29 @@ class _Styles:
         self.made = {}
         self.changed = False
 
-    def apply(self, el, numfmt):
+    def apply(self, el, numfmt, locked=True, attr="s"):
+        """Give the element (a <c> or <row>; a <col> with attr="style") a style with this number format and lock."""
         if self.xfs is None:
             return
-        s, want = int(el.get("s", 0)), numfmt or "General"
-        have = int(self.xfs[s].get("numFmtId", 0)) if 0 <= s < len(self.xfs) else 0
-        if want in (self.codes.get(have), builtin_code(have)) or self.ids.get(want) == have:
+        s, want = int(el.get(attr, 0)), numfmt or "General"
+        xf = self.xfs[s] if 0 <= s < len(self.xfs) else None
+        have = int(xf.get("numFmtId", 0)) if xf is not None else 0
+        same = want in (self.codes.get(have), builtin_code(have)) or self.ids.get(want) == have
+        if same and locked_style(xf) == locked:
+            if el.get(attr) is None and s != 0:
+                el.set(attr, str(s))
             return
-        if (s, want) not in self.made:
-            xf = copy.deepcopy(self.xfs[s]) if 0 <= s < len(self.xfs) else etree.Element(q("xf"))
-            xf.set("numFmtId", str(self._format_id(want)))
-            xf.set("applyNumberFormat", "1")
-            self.xfs.append(xf)
+        if (s, want, locked) not in self.made:
+            new = copy.deepcopy(xf) if xf is not None else etree.Element(q("xf"))
+            if not same:
+                new.set("numFmtId", str(self._format_id(want)))
+                new.set("applyNumberFormat", "1")
+            _set_locked(new, locked)
+            self.xfs.append(new)
             self.xfs.set("count", str(len(self.xfs)))
-            self.made[(s, want)] = len(self.xfs) - 1
+            self.made[(s, want, locked)] = len(self.xfs) - 1
             self.changed = True
-        el.set("s", str(self.made[(s, want)]))
+        el.set(attr, str(self.made[(s, want, locked)]))
 
     def _format_id(self, code):
         if code not in self.ids:
@@ -220,6 +259,42 @@ class _Styles:
             self.codes[new_id] = code
             self.ids[code] = new_id
         return self.ids[code]
+
+
+_SQREF = re.compile(r'<(conditionalFormatting|dataValidation|hyperlink)\b[^>]*?\b(?:sqref|ref)="([^"]+)"')
+_SHEET_REF = re.compile(r"((?:'(?:[^']|'')+'|[A-Za-z_][\w.]*))!(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)")
+
+
+def _check_moves(pkg, book, sheet_parts):
+    """Cells cut and pasted take their formulas and names with them in the model. Parts of the file this does not
+    rewrite (conditional formats, validation, hyperlinks, charts, pivot tables) would be left on the cells as they
+    were: a save where one covers or reads the cells moved, or where they landed, is refused, as not modelled."""
+    index = {s.name.lower(): i for i, s in enumerate(book.sheets)}
+    areas = {}  # sheet index -> the rectangles moves took cells from or put them on
+    for src, rect, dst, landed in book.moves:
+        areas.setdefault(index[src.lower()], []).append(rect)
+        areas.setdefault(index[dst.lower()], []).append(landed)
+
+    def hit(i, text):
+        found = parse_area(text.replace("$", "")) if text else None
+        return found is not None and any(not (found[2] < a[0] or found[0] > a[2] or found[3] < a[1] or found[1] > a[3])
+                                         for a in areas.get(i, ()))  # fmt: skip
+
+    for i in areas:
+        xml = pkg.zip.read(sheet_parts[i]).decode("utf-8", "replace")
+        xml = re.sub(r"<sheetData.*?</sheetData>", "", xml, flags=re.S)
+        for kind, sqref in _SQREF.findall(xml):
+            if any(hit(i, part) for part in sqref.split()):
+                raise VBANotImplemented(f"saving cells cut and pasted that the sheet's {kind} covers")
+    for part in sorted(pkg.names):
+        if not part.startswith("xl/") or part.startswith("xl/worksheets/") or not part.endswith(".xml"):
+            continue
+        if part in ("xl/workbook.xml", "xl/styles.xml", "xl/sharedStrings.xml"):
+            continue
+        for name, ref in _SHEET_REF.findall(pkg.zip.read(part).decode("utf-8", "replace")):
+            i = index.get(name.strip("'").replace("''", "'").lower())
+            if i is not None and hit(i, ref):
+                raise VBANotImplemented(f"saving cells cut and pasted that {part} reads ({name}!{ref})")
 
 
 def _check_renamed(pkg, patched, renamed):
@@ -258,8 +333,8 @@ def _shared_string_index(pkg):
 
 
 def _changed_cells(old, new):
-    """[(row, column, cell)] for each cell whose content or number format the macros changed; the cell is None for
-    one that is empty now."""
+    """[(row, column, cell)] for each cell whose content, number format or lock the macros changed; the cell is None
+    for one that is empty now."""
     keys = set()
     for sheet in (old, new):
         for r, row in sheet.rows.items():
@@ -268,9 +343,16 @@ def _changed_cells(old, new):
     out = []
     for r, c in sorted(keys):
         a, b = _stored(old, r, c), _stored(new, r, c)
-        if _cell_key(a) != _cell_key(b) or old.format_at(r, c) != new.format_at(r, c):
+        if _cell_key(a) != _cell_key(b) or old.style_at(r, c) != new.style_at(r, c):
             out.append((r, c, b if _cell_key(b) is not None else None))
     return out
+
+
+def _changed_lines(old, new):
+    """The rows and the columns formatted whole whose style the macros changed: ({row: style or None}, {col: style})."""
+    rows = {r: new.row_style(r) for r in {*old.row_formats, *new.row_formats} if old.row_style(r) != new.row_style(r)}
+    cols = {*old.col_formats, *old.col_unlocked, *new.col_formats, *new.col_unlocked}
+    return rows, {c: new.col_style(c) for c in sorted(cols) if old.col_style(c) != new.col_style(c)}
 
 
 def _af_desc(af):
@@ -284,7 +366,9 @@ def _af_desc(af):
 # ---------------------------------------------------------------------------
 
 
-def _patch_sheet(xml, old, new, cells, sst, selected, filter_changed, default_cm=None, styles=None):
+def _patch_sheet(
+    xml, old, new, cells, sst, selected, filter_changed, default_cm=None, styles=None, lines=({}, {}), protection=False
+):
     root = etree.fromstring(xml)
     data = root.find(q("sheetData"))
     rows = {int(r.get("r")): r for r in data.findall(q("row"))}
@@ -315,14 +399,13 @@ def _patch_sheet(xml, old, new, cells, sst, selected, filter_changed, default_cm
     touched_rows = set()
     for r, c, cell in cells:
         el = cmap.get((r, c))
-        if cell is None:  # emptied, or empty with another number format than it had (Clear, a pasted format)
-            want = new.format_at(r, c)
-            if el is None and want != old.inherited_format(r, c):
+        if cell is None:  # emptied, or empty with another style than it had (Clear, a format set or pasted)
+            if el is None and new.style_at(r, c) != old.inherited(r, c):
                 el = cmap[(r, c)] = _new_cell(_row(data, rows, r), r, c, column_styles)
             if el is not None:
                 _clear(el)
                 if styles is not None:
-                    styles.apply(el, want)
+                    styles.apply(el, *new.style_at(r, c))
                 if not (set(el.attrib) - {"r"}):
                     el.getparent().remove(el)
                     del cmap[(r, c)]
@@ -339,8 +422,33 @@ def _patch_sheet(xml, old, new, cells, sst, selected, filter_changed, default_cm
             spill = (spill, cm)
         _set(el, cell, sst, spill, (r, c) in new.spill_owner, keep=el.find(q("f")) if (r, c) in keep_formula else None)
         if styles is not None:
-            styles.apply(el, cell.numfmt)
+            styles.apply(el, *cell.style)
         touched_rows.add(r)
+
+    row_styles, col_styles = lines
+    if (row_styles or col_styles) and styles is None:
+        raise VBANotImplemented("saving formats of whole rows or columns in a workbook with no styles part")
+    for r, style in row_styles.items():
+        row_el = _row(data, rows, r)
+        if style is None:
+            for attr in ("customFormat", "s"):
+                row_el.attrib.pop(attr, None)
+        else:
+            row_el.set("customFormat", "1")
+            styles.apply(row_el, *style)
+    if col_styles:
+        _write_col_styles(root, col_styles, styles, new)
+    if row_styles or col_styles:
+        # a cell the file holds but the model needs no record of takes its row's or column's new style; one the file
+        # does not hold, whose row or column has another style now, is given an element to keep its own
+        for (r, c), el in cmap.items():
+            if (r, c) not in touched and old.style_at(r, c) != new.style_at(r, c):
+                styles.apply(el, *new.style_at(r, c))
+        for r, row in new.rows.items():
+            for c, cell in row.items():
+                if (r, c) not in cmap and cell.style != new.inherited(r, c):
+                    el = cmap[(r, c)] = _new_cell(_row(data, rows, r), r, c, column_styles)
+                    styles.apply(el, *cell.style)
 
     for r in old.hidden_rows ^ new.hidden_rows:
         row_el = _row(data, rows, r)
@@ -355,10 +463,83 @@ def _patch_sheet(xml, old, new, cells, sst, selected, filter_changed, default_cm
 
     if filter_changed:
         _write_autofilter(root, new.autofilter)
+    if protection is not False:
+        _write_protection(root, protection)
     _set_filter_mode(root, new.in_filter_mode())
     _write_view(root, new, selected)
     _update_dimension(root, new)
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _write_col_styles(root, col_styles, styles, sheet):
+    """Give the columns their new styles: a <col> that covers more columns than change is cut in parts, and a column
+    with none is given one, at the sheet's default width (a <col> with no width hides its column)."""
+    cols = root.find(q("cols"))
+    if cols is None:
+        cols = etree.Element(q("cols"))
+        _insert_in_order(root, cols)
+    runs = []  # (first, last, style) of consecutive columns given the same style
+    for c, style in col_styles.items():
+        if runs and runs[-1][1] == c - 1 and runs[-1][2] == style:
+            runs[-1][1] = c
+        else:
+            runs.append([c, c, style])
+    for lo, hi, style in runs:
+        for el in list(cols):
+            first, last = int(el.get("min")), int(el.get("max"))
+            if first <= hi and last >= lo and (first < lo or last > hi):  # cut it where the run starts and ends
+                for a, b in ((first, lo - 1), (max(first, lo), min(last, hi)), (hi + 1, last)):
+                    if a <= b:
+                        part = copy.deepcopy(el)
+                        part.set("min", str(a))
+                        part.set("max", str(b))
+                        el.addprevious(part)
+                cols.remove(el)
+        covered = []
+        for el in cols:
+            first, last = int(el.get("min")), int(el.get("max"))
+            if lo <= first and last <= hi:
+                styles.apply(el, *style, attr="style")
+                covered.append((first, last))
+        start = lo
+        for first, last in sorted(covered) + [(hi + 1, hi + 1)]:
+            if start < first and tuple(style) != (None, True):
+                el = etree.Element(q("col"), min=str(start), max=str(first - 1), width=_default_width(root, sheet))
+                styles.apply(el, *style, attr="style")
+                later = [x for x in cols if int(x.get("min")) > start]
+                (later[0].addprevious(el) if later else cols.append(el))
+            start = last + 1
+
+
+def _default_width(root, sheet):
+    """The width, as the file writes widths, of a column the sheet gives no width of its own: the sheet's default if
+    the file says it, else the one Excel for Windows works out from the base width and the widest digit of Calibri 11
+    (seven pixels), in whole steps of eight pixels. A workbook with another font may show it a little otherwise."""
+    pr = root.find(q("sheetFormatPr"))
+    if pr is not None and pr.get("defaultColWidth"):
+        return pr.get("defaultColWidth")
+    if sheet.book.app is not None:
+        sheet.book.app.note("COLUMN-WIDTH-DEFAULT")
+    base = int(pr.get("baseColWidth", 8)) if pr is not None else 8
+    pixels = -(-(base * 7 + 5) // 8) * 8
+    return repr(math.trunc(pixels / 7 * 256) / 256)
+
+
+def _protection_change(book, old, new):
+    """The attributes of the sheet's <sheetProtection> now, None for no protection, or False when it has not changed.
+    A password a macro gave is hashed with a salt made from the file and the sheet's name: the same press of the same
+    workbook saves the same copy."""
+    salt = hashlib.sha256(book.seed + new.name.encode("utf-8")).digest()[:16]
+    before, after = (p.attrs(salt) if p is not None else None for p in (old.protection, new.protection))
+    return False if before == after else after
+
+
+def _write_protection(root, attrs):
+    old = root.find(q("sheetProtection"))
+    if old is not None:
+        root.remove(old)
+    if attrs is not None:
+        _insert_in_order(root, etree.Element(q("sheetProtection"), attrs))
 
 
 def _has_shared_formula(el):
@@ -578,13 +759,39 @@ def _update_dimension(root, sheet):
 # ---------------------------------------------------------------------------
 
 
+WORKBOOK_ORDER = ["fileVersion", "fileSharing", "workbookPr", "workbookProtection", "bookViews", "sheets"]
+
+
 def _patch_workbook(root, base, book, pending_formulas, filter_refs, renamed=None):
     for el, old, new in zip(root.iter(q("sheet")), base.sheets, book.sheets, strict=False):
         if old.name != new.name:
             el.set("name", new.name)
+        if old.state != new.state:
+            if new.state == "visible":
+                el.attrib.pop("state", None)
+            else:
+                el.set("state", new.state)
+    salt = hashlib.sha256(book.seed + b"workbook").digest()[:16]
+    protection = [p.attrs(salt) if p is not None else None for p in (base.protection, book.protection)]
+    if protection[0] != protection[1]:
+        old_el = root.find(q("workbookProtection"))
+        if old_el is not None:
+            root.remove(old_el)
+        if protection[1] is not None:
+            el = etree.Element(q("workbookProtection"), protection[1])
+            later = [c for c in root if etree.QName(c).localname in WORKBOOK_ORDER[4:]]
+            (later[0].addprevious(el) if later else root.append(el))
     if renamed:  # a defined name follows its sheet's new name, as in Excel
         for d in root.iter(q("definedName")):
             d.text = rename_sheets(d.text or "", renamed)
+    if book.moves:  # and the cells it names, where they were cut and pasted
+        sheets = {s.name.lower(): s for s in book.sheets}
+        for d in root.iter(q("definedName")):
+            text = d.text or ""
+            for src, rect, dst, landed in book.moves:
+                cut, dest = (sheets[src.lower()], *rect), (sheets[dst.lower()], landed[0], landed[1])
+                text = moved_references(text, None, None, cut, dest, lambda n: sheets.get(n.lower()))
+            d.text = text
     view = root.find(f"{q('bookViews')}/{q('workbookView')}")
     if view is not None and book.active is not None:
         tab = book.sheets.index(book.active)

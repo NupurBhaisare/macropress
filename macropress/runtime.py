@@ -881,9 +881,9 @@ class Context:
         self.deadline = None  # when that time is up: counted from the first macro's start
         self.now = now or _dt.datetime.now().replace(microsecond=0)
         self.clock = Clock(self.now)
-        self.app = Application(self.book, self.ledger, self.clock)
-        self.book.now = self.now
         self.answers = list(answers)
+        self.app = Application(self.book, self.ledger, self.clock, self.answers)
+        self.book.now = self.now
         self.environ = dict(environ or {})
         self.messages = []
         self.err = ErrObject()

@@ -17,7 +17,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
-| 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `NumberFormat =`, `Unprotect`, `FormulaR1C1`, `FillDown`, `.Font` | nothing | small, five pieces |
+| 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font` (1.1, 1.3, 1.4 and 1.5 are done) | nothing | small, five pieces |
 | 2 | [Worksheet functions](#2-worksheet-functions) | `SUMIFS`, `VLOOKUP(…, TRUE)`, `Application.Match`, `WorksheetFunction.CountIf` | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
@@ -45,6 +45,13 @@ way to carry on past fonts and colours), while writing fonts, fills and borders 
 ## 1. The first lines of a recorded macro
 
 Five small pieces, in this order. None needs new machinery.
+
+**Status**: 1.1, 1.3, 1.4 and 1.5 are done, each recorded from Excel first; what they still refuse is in
+[supported.md](supported.md). 1.2 waits for the maintainers' decision. Left open, each with Excel's answer recorded in
+the parity suite: format codes with letters Excel reads its own way (`abc` becomes `\abbc`); `AutoFill` of text that
+counts on (`Item 1`, `Q1`, months, weekdays) and into two directions at once; a cut that moves the end of a range
+along it (Excel stretches the range) or part of a range to another sheet (Excel shrinks it); a second `Protect` with
+other options and another password, whose recorded answers disagree.
 
 ### 1.1 Setting `NumberFormat`
 

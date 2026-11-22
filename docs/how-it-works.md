@@ -17,7 +17,7 @@ that does each part, so you know where to look when you want to change something
 - **Repeatable runs.** `Now`, `Date`, `Time` and `Timer` read a clock that starts at `--now` and moves only as the
   macros read it. Answers to `MsgBox` and `InputBox` come from `--answer`, `Environ` from `--env`, and `Rnd` is
   refused. The same workbook, buttons and answers always give the same result.
-- **Excel is the judge.** What MacroPress does is set beside what Excel does: about a thousand small macros were run
+- **Excel is the judge.** What MacroPress does is set beside what Excel does: over a thousand small macros were run
   in Excel and their answers recorded, and every test run compares ([tests/parity](../tests/parity)).
 
 ## 1. Read the workbook ([xlsx.py](../macropress/xlsx.py))

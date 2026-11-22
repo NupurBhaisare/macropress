@@ -21,9 +21,22 @@ The first public release.
 - A JSON report of each button's outcome, the cells that changed, and the assumptions about Excel the run relied on.
 - Three example workbooks, built from their VBA sources and checked against Excel for Mac.
 
-- A parity suite (`tests/parity`): about a thousand small macros whose 3,000 answers were recorded from Excel itself
+- A parity suite (`tests/parity`): over a thousand small macros whose 3,700 answers were recorded from Excel itself
   and are compared with MacroPress's on every test run. The answers MacroPress knowingly gives otherwise are listed
   with their reasons, so a difference can neither appear nor go away unnoticed.
+- What recorded macros do in their first lines ([roadmap](docs/roadmap.md), group 1), each recorded from Excel
+  first (162 more tests in the parity suite) and the saved copy checked by opening it in Excel:
+  - **Setting `NumberFormat`** on cells, whole rows, whole columns and the whole sheet, the code read back as Excel
+    reads it; a range down to the last row formats its columns; several formats read as `Null`. Rows and columns
+    formatted whole are saved as Excel saves them, and count in `UsedRange`.
+  - **Protection**: sheet and workbook protection, read from the file and set by `Protect`, with the passwords Excel
+    keeps (either form of hash) and the `Allow...` options; `Locked`; what a protected sheet refuses, and what it lets
+    a macro change, as Excel does. `Unprotect` without the password asks for it (`--answer`).
+  - **`Visible`**: hiding and showing sheets, very hidden too.
+  - **`FormulaR1C1`** and `Formula2R1C1`, read and written, and R1C1 text given to `Formula`.
+  - **Filling**: `FillDown`, `FillUp`, `FillRight`, `FillLeft`; a copy onto a larger range; `AutoFill` of formulas,
+    copies and number and date series; `Cut`, with the formulas and names that read the cells following them; and
+    `Worksheet.Paste`.
 
 ### Fixed
 
@@ -81,6 +94,11 @@ Found by running those macros in both Excel and MacroPress and comparing every a
   below its range; `>` and `<` in a filter compare numbers with numbers and text with text, so text that reads as a
   number is not "more than 500"; `INDEX` with one index into a block of several rows and columns is `#REF!`. Every
   behaviour the report used to call unverified has now been checked against Excel.
+- **Found while modelling what recorded macros do first**: a write to a protected sheet went through as if it were
+  not protected. `NumberFormat` of several cells gave the first cell's format instead of `Null`. A dynamic array was
+  kept from spilling by an empty cell that only had a format, and the cells it filled lost theirs. A paste or `Clear`
+  of whole rows or columns changed their formats in the model but not in the saved copy. `CutCopyMode` with nothing
+  copied gave `False` instead of 0.
 
 ### Changed
 

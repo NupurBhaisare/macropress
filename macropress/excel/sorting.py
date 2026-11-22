@@ -149,6 +149,7 @@ def sort_range(sheet, rect, keys, header, match_case, orientation):
         raise VBANotImplemented("Header:=xlGuess (Excel guesses whether the first row is a header)")
     if not keys:
         raise VBARuntimeError(1004, "The sort reference is not valid")
+    sheet.guard("sort", [rect])
     r1, c1, r2, c2 = rect
     if h == 1:
         r1 += 1

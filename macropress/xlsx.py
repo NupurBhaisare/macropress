@@ -1,6 +1,7 @@
 """Read an .xlsx/.xlsm package into the workbook model (standard library only)."""
 
 import datetime as dt
+import hashlib
 import html
 import os
 import posixpath
@@ -24,6 +25,7 @@ from .excel import (
     parse_area,
     shift_formula,
 )
+from .excel.protection import BookProtection, SheetProtection
 from .numfmt import builtin_code, vba_code
 from .values import XLError, date_to_serial
 
@@ -95,8 +97,10 @@ class Package:
 def read_workbook(path):
     pkg = Package(path)
     book = Book(os.path.basename(path))
+    with open(path, "rb") as f:
+        book.seed = hashlib.sha256(f.read()).digest()
     sst = _shared_strings(pkg)
-    formats = _cell_formats(pkg)
+    formats = _cell_styles(pkg)
     wb = pkg.xml("xl/workbook.xml")
     rels = {rid: target for rid, _, target in pkg.rels("xl/workbook.xml")}
     pr = wb.find(NS + "workbookPr")
@@ -109,6 +113,9 @@ def read_workbook(path):
             raise VBANotImplemented("a workbook set to 'precision as displayed' (numbers are rounded as they show)")
         book.manual = calc.get("calcMode") == "manual"
         book.calc_on_save = calc.get("calcOnSave") not in ("0", "false")
+    protection = wb.find(NS + "workbookProtection")
+    if protection is not None:
+        book.protection = book.protection_read = BookProtection.read(protection.attrib)
     sheet_parts = []
     for s in wb.iter(NS + "sheet"):
         part = rels.get(s.get(REL_NS + "id"))
@@ -151,15 +158,21 @@ def _shared_strings(pkg):
     return out
 
 
-def _cell_formats(pkg):
-    """The number format of each cell style, as VBA names it; General is None."""
+def _cell_styles(pkg):
+    """Each cell style's number format, as VBA names it (General is None), and whether it locks its cells."""
     if "xl/styles.xml" not in pkg.names:
         return []
     root = pkg.xml("xl/styles.xml")
     codes = custom_formats(root)
     xfs = root.find(NS + "cellXfs")
-    ids = [int(xf.get("numFmtId", 0)) for xf in (xfs if xfs is not None else [])]
-    return [codes.get(i) or builtin_code(i) for i in ids]
+    out = []
+    for xf in xfs if xfs is not None else []:
+        i = int(xf.get("numFmtId", 0))
+        code = codes.get(i) or builtin_code(i)
+        protection = xf.find(NS + "protection")
+        locked = protection is None or protection.get("locked") not in ("0", "false")
+        out.append((None if code == "General" else code, locked))
+    return out
 
 
 def custom_formats(styles_root):
@@ -199,10 +212,9 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             sheet.sel = area
             sheet.active_cell = (active[0], active[1])
 
-    def number_format(style):
-        style = int(style or 0)
-        code = formats[style] if style < len(formats) else "General"
-        return None if code == "General" else code
+    def style_of(s):
+        s = int(s or 0)
+        return formats[s] if s < len(formats) else (None, True)
 
     default = root.find(NS + "sheetFormatPr")
     if default is not None and default.get("defaultColWidth"):
@@ -214,15 +226,21 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             sheet.col_widths.append((first, last, float(col.get("width"))))
         if col.get("hidden") in ("1", "true"):
             sheet.hidden_cols.update(range(first, last + 1))
-        if number_format(col.get("style")) is not None:  # cells of the column with no record of their own
-            sheet.col_formats.update(dict.fromkeys(range(first, last + 1), number_format(col.get("style"))))
+        numfmt, locked = style_of(col.get("style"))  # of the cells of the column with no record of their own
+        if numfmt is not None:
+            sheet.col_formats.update(dict.fromkeys(range(first, last + 1), numfmt))
+        if not locked:
+            sheet.col_unlocked.update(range(first, last + 1))
     data = root.find(NS + "sheetData")
     for row in data if data is not None else []:
         r = int(row.get("r"))
         if row.get("hidden") in ("1", "true"):
             sheet.hidden_rows.add(r)
         if row.get("customFormat") in ("1", "true"):
-            sheet.row_formats[r] = number_format(row.get("s"))
+            numfmt, locked = style_of(row.get("s"))
+            sheet.row_formats[r] = numfmt
+            if not locked:
+                sheet.row_unlocked.add(r)
         cells = {}
         for c in row.findall(NS + "c"):
             m = re.match(r"([A-Z]+)(\d+)$", c.get("r"))
@@ -230,7 +248,7 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             t = c.get("t", "n")
             v = c.find(NS + "v")
             f = c.find(NS + "f")
-            numfmt = number_format(c.get("s"))
+            numfmt, locked = style_of(c.get("s"))
             value = None
             if t == "inlineStr":
                 is_ = c.find(NS + "is")
@@ -270,9 +288,9 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
                         sheet.array_cells[(r, col)] = area
                 if formula is not None and value is None:  # saved without its value: calculated when it is read
                     value, uncalculated = PENDING, True
-            if value is None and formula is None and numfmt == sheet.inherited_format(r, col):
+            if value is None and formula is None and (numfmt, locked) == sheet.inherited(r, col):
                 continue  # an empty cell formatted as its row or column is anyway: no record needed
-            cells[col] = Cell(value, formula, numfmt)
+            cells[col] = Cell(value, formula, numfmt, locked)
         if cells:
             sheet.rows[r] = cells
     for (ar, ac), (r1, c1, r2, c2) in [*sheet.spills.items(), *sheet.array_cells.items()]:
@@ -280,6 +298,9 @@ def _read_sheet(pkg, part, sheet, sst, formats, book):
             for cc in range(c1, c2 + 1):
                 if (rr, cc) != (ar, ac):  # its values are the formula's: unknown once the formula's are
                     sheet.spill_owner[(rr, cc)] = (ar, ac)
+    protection = root.find(NS + "sheetProtection")
+    if protection is not None:
+        sheet.protection = sheet.protection_read = SheetProtection.read(protection.attrib)
     merges = root.find(NS + "mergeCells")
     for mc in merges if merges is not None else []:
         area = parse_area(mc.get("ref"))

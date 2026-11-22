@@ -1,6 +1,6 @@
 # Parity with Excel
 
-MacroPress claims to do what Excel does. This folder is where that claim is checked: about a thousand small macros
+MacroPress claims to do what Excel does. This folder is where that claim is checked: over a thousand small macros
 (the *probes*) were run in Excel itself, each writing down what it found, and the test suite runs the same macros in
 MacroPress and compares every answer.
 

@@ -6,11 +6,14 @@ A test is T(module, name, *lines). A line is VBA as it stands, or a probe, which
   E: stmt   run the statement and record Err.Number                     X: expr   as text, Err left as it is
 A test runs under On Error Resume Next, so a probe that fails records ERR and the error's number.
 
-SHEETS lists the workbook's sheets as (name, column widths, rows). A cell is a value or (value, style); the styles
-are the number formats in STYLES below.
+SHEETS lists the workbook's sheets as (name, column widths, rows), with {"protection": a <sheetProtection> element,
+"state": "hidden"} after it for a sheet the file saves so. A cell is a value or (value, style); the styles are the
+number formats in STYLES below.
 """
 
+import base64
 import datetime as dt
+import hashlib
 
 
 def q(s):
@@ -66,6 +69,30 @@ Public Function ColJoin(ByVal ws As Object, ByVal col As Long, ByVal n As Long) 
         s = s & Show(ws.Cells(r, col).Value2) & "|"
     Next r
     ColJoin = s
+End Function
+
+Public Function RowJoin(ByVal ws As Object, ByVal row As Long, ByVal n As Long) As String
+    Dim c As Long, s As String
+    For c = 1 To n
+        s = s & Show(ws.Cells(row, c).Value2) & "|"
+    Next c
+    RowJoin = s
+End Function
+
+Public Function FJoin(ByVal ws As Object, ByVal col As Long, ByVal n As Long) As String
+    Dim r As Long, s As String
+    For r = 1 To n
+        s = s & ws.Cells(r, col).Formula & "|"
+    Next r
+    FJoin = s
+End Function
+
+Public Function NFJoin(ByVal ws As Object, ByVal col As Long, ByVal n As Long) As String
+    Dim r As Long, s As String
+    For r = 1 To n
+        s = s & ws.Cells(r, col).NumberFormat & "|"
+    Next r
+    NFJoin = s
 End Function
 '''
 
@@ -818,7 +845,8 @@ STYLES = [("text", 49), ("t20", 20), ("t19", 19), ("t45", 45), ("t46", 46), ("d1
                 ("euro", "[$€-407] #,##0.00"), ("euroafter", "#,##0.00 [$€-407]"), ("usdlit", '#,##0.00 "USD"'),
                 ("dollarq", '"$"#,##0.00'), ("pound", "£#,##0.00"), ("usdcode", "[$USD] #,##0.00"), ("n2", 2), ("n4", 4),
                 ("dollarbare", "$0.00"), ("sci", 11), ("frac", 12), ("yen", "[$¥-411]#,##0"), ("n0000", "0.0000"), ("p2", 10),
-          ("d15", 15), ("t18", 18), ("n37", 37), ("f13", 13), ("t21", 21), ("n39", 39), ("s48", 48)]
+          ("d15", 15), ("t18", 18), ("n37", 37), ("f13", 13), ("t21", 21), ("n39", 39), ("s48", 48),
+          ("unlocked", 0, {"unlocked": True})]
 B4_DATES = ["t20", "t19", "t45", "t46", "d16", "d17", "d22", "d14", "yyyy", "mmmm", "dddd", "hlit", "mlit", "m1", "mmss0", "sci", "frac"]
 B4_MONEY = ["c5", "c7", "c8", "c42", "c44", "n41", "n43", "euro", "euroafter", "usdlit", "dollarq", "pound", "usdcode", "n2", "n4",
             "dollarbare", "yen", "money", "percent"]
@@ -1086,7 +1114,370 @@ SHEETS.append(("HC2", [8], [[1], [2], [3]]))
 SHEETS.append(("FM", [10], [["K"], [5], ["abc"], [600], ["700"], [True], [None], [400]]))
 
 
+# ------------------------------------------------------------------------------ group 1: the first lines of a recorded macro
+def ws_(sheet):
+    return f'Set ws = ThisWorkbook.Worksheets("{sheet}")'
+
+
+# --- setting NumberFormat
+NF, NF2, NF3, NF4, NF5, NF6 = (W(f"NF{i}") for i in ("", 2, 3, 4, 5, 6))
+T("TNumFmt", "nf_basic", f'{NF}.Range("A1").Value = 1234.5', f'{NF}.Range("A1").NumberFormat = "0.00"', f'S: {NF}.Range("A1").NumberFormat',
+  f'S: {NF}.Range("A1").Text', f'S: TypeName({NF}.Range("A1").Value)', f'{NF}.Range("A2").Value = 1234.5',
+  f'{NF}.Range("A2").NumberFormat = "#,##0.00"', f'S: {NF}.Range("A2").Text', f'{NF}.Range("A3").Value = 45296',
+  f'{NF}.Range("A3").NumberFormat = "yyyy-mm-dd"', f'S: TypeName({NF}.Range("A3").Value)', f'V: {NF}.Range("A3").Value2',
+  f'{NF}.Range("A3").NumberFormat = "0.00"', f'S: TypeName({NF}.Range("A3").Value)', f'{NF}.Range("A4").NumberFormat = "0.0"',
+  f'{NF}.Range("A4").Value = 2.25', f'S: {NF}.Range("A4").Text', f'{NF}.Range("A4").Value = "5%"', f'S: {NF}.Range("A4").NumberFormat',
+  f'V: {NF}.Range("A4").Value')
+T("TNumFmt", "nf_text", f'{NF}.Range("B1").Value = 5', f'{NF}.Range("B1").NumberFormat = "@"', f'S: TypeName({NF}.Range("B1").Value)',
+  f'S: {NF}.Range("B1").Text', f'{NF}.Range("B1").Value = {NF}.Range("B1").Value', f'S: TypeName({NF}.Range("B1").Value)',
+  f'{NF}.Range("B2").Formula = "=1+1"', f'{NF}.Range("B2").NumberFormat = "@"', f'S: {NF}.Range("B2").Formula', f'V: {NF}.Range("B2").Value',
+  f'{NF}.Range("B2").Formula = {NF}.Range("B2").Formula', f'V: {NF}.Range("B2").Value', f'{NF}.Range("B4").NumberFormat = "@"',
+  f'{NF}.Range("B4").Value = "007"', f'{NF}.Range("B4").NumberFormat = "General"', f'V: {NF}.Range("B4").Value',
+  f'S: {NF}.Range("B4").NumberFormat', f'{NF}.Range("B5").NumberFormat = "@"', f'{NF}.Range("B5").Value = 12', f'V: {NF}.Range("B5").Value')
+NF_CODES = ["0.00", "#,##0", "#,##0.00", "0%", "0.00%", "General", "@", "0", "0.0", "#,##0.000", "yyyy-mm-dd", "dd/mm/yyyy",
+            "mm/dd/yyyy", "dd-mmm-yy", "mmm-yy", "d-mmm-yyyy", "mmmm yyyy", "hh:mm", "h:mm:ss", "[h]:mm", "dd/mm/yyyy hh:mm",
+            "#,##0_);(#,##0)", "#,##0.00_);[Red](#,##0.00)", "0.00;[Red]-0.00", '0.00;-0.00;"-"', "#,##0;-#,##0;-", "$#,##0.00",
+            "\\$#,##0.00", '"$"#,##0.00', "[$$-409]#,##0.00", "[$€-407] #,##0.00", "£#,##0.00",
+            '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)', "#,##0,", '#,##0,,"M"', "0.00E+00", "# ?/?", "0.00 kg", '0.00" kg"',
+            "0.0x", "general", "GENERAL", "MM/DD/YYYY", "DD-MMM-YY", "[red]0.00", "[RED]0.00", "0.00e+00", "h:mm AM/PM", "h:mm am/pm",
+            "[$-409]mmmm d, yyyy;@", "[$-F800]dddd, mmmm dd, yyyy", "m/d/yyyy", "m/d/yy", "d/m/yyyy", "yyyy", "mmm", "0.00.00", "[Red",
+            "0;0;0;0;0", '"abc', "", " ", "0.00 ", "Text", "abc", "#", "?", "0 0", "00000", "000-00-0000", '@" text"', "0.00;;", ";;;",
+            "[Blue]0;[Red]-0", "[>1000]#,##0;0", '[<0]"neg";"pos"', '#,##0.00 "USD"', "#,##0.00 USD", "0.0 %", "0.0%;-0.0%",
+            "#,##0.0_);(#,##0.0)", "#,##0.00;(#,##0.00)", "0.00x", "Standard"]
+for k, code in enumerate(NF_CODES, 1):
+    cell = f"{W('NFC')}.Cells({(k - 1) % 40 + 1}, {(k - 1) // 40 + 1})"
+    T("TNumFmt", f"code{k:02d}", f"E: {cell}.NumberFormat = {q(code)}", f"S: {cell}.NumberFormat")
+T("TNumFmt", "nf_mixed", f'{NF}.Range("C1").NumberFormat = "0.00"', f'{NF}.Range("C2").NumberFormat = "0%"', f'V: {NF}.Range("C1:C2").NumberFormat',
+  f'{NF}.Range("C3:C4").NumberFormat = "0.0"', f'V: {NF}.Range("C3:C4").NumberFormat', f'V: {NF}.Range("C5:C6").NumberFormat',
+  f'V: {NF}.Range("C4:C5").NumberFormat', f'V: {NF}.Range("C3:D4").NumberFormat', f'{NF}.Range("C7").Value = 1',
+  f'{NF}.Range("C7:C8").NumberFormat = "0.000"', f'S: {NF}.Range("C8").NumberFormat', f'S: {NF}.Range("C7").Text')
+T("TNumFmt", "nf_rowscols", f'{NF2}.Rows(3).NumberFormat = "0%"', f'{NF2}.Columns("C").NumberFormat = "0.00"', f'S: {NF2}.Range("C1").NumberFormat',
+  f'S: {NF2}.Range("C3").NumberFormat', f'S: {NF2}.Range("A3").NumberFormat', f'S: {NF2}.Range("C1048576").NumberFormat',
+  f'V: {NF2}.Columns("C").NumberFormat', f'V: {NF2}.Rows(3).NumberFormat', f'{NF2}.Rows(5).NumberFormat = "0.000"',
+  f'S: {NF2}.Range("C5").NumberFormat', f'V: {NF2}.Columns("C").NumberFormat', f'{NF2}.Range("C7").Value = 1.5', f'S: {NF2}.Range("C7").Text',
+  f'{NF2}.Range("C7").ClearContents', f'S: {NF2}.Range("C7").NumberFormat', f'{NF2}.Range("C7").Clear', f'S: {NF2}.Range("C7").NumberFormat',
+  f'{NF2}.Columns("C").Clear', f'S: {NF2}.Range("C9").NumberFormat', f'S: {NF2}.Range("C3").NumberFormat', f'S: {NF2}.Range("C5").NumberFormat')
+T("TNumFmt", "nf_used", f'S: {NF3}.UsedRange.Address', f'{NF3}.Columns("D").NumberFormat = "0.00"', f'S: {NF3}.UsedRange.Address',
+  f'{NF3}.Rows(10).NumberFormat = "0%"', f'S: {NF3}.UsedRange.Address', f'{NF3}.Range("F20").NumberFormat = "0.0"', f'S: {NF3}.UsedRange.Address',
+  f'{NF3}.Range("B2").Value = 1', f'S: {NF3}.UsedRange.Address', f'S: {NF3}.Range("D10").NumberFormat', f'S: {NF3}.Cells(10, 4).End(xlUp).Address')
+T("TNumFmt", "nf_cells", f'{NF4}.Range("B2").Value = 5', f'{NF4}.Cells.NumberFormat = "@"', f'S: {NF4}.Range("A1").NumberFormat',
+  f'S: {NF4}.Range("XFD1048576").NumberFormat', f'V: {NF4}.Range("B2").Value', f'{NF4}.Range("Z100").Value = "007"', f'V: {NF4}.Range("Z100").Value',
+  f'{NF4}.Range("Z101").Value = 5', f'V: {NF4}.Range("Z101").Value', f'V: {NF4}.Cells.NumberFormat', f'{NF4}.Cells.NumberFormat = "General"',
+  f'S: {NF4}.Range("Z100").NumberFormat', f'V: {NF4}.Range("Z100").Value', f'V: {NF4}.Cells.NumberFormat', f'S: {NF4}.UsedRange.Address')
+T("TNumFmt", "nf_tall", f'{NF5}.Range("D2:D1048576").NumberFormat = "0.0"', f'S: {NF5}.Range("D1").NumberFormat', f'S: {NF5}.Range("D2").NumberFormat',
+  f'S: {NF5}.Range("D999999").NumberFormat', f'V: {NF5}.Columns("D").NumberFormat',
+  f'{NF5}.Range({NF5}.Cells(3, 6), {NF5}.Cells(3, 16384)).NumberFormat = "0%"', f'S: {NF5}.Range("E3").NumberFormat',
+  f'S: {NF5}.Range("XFD3").NumberFormat', f'S: {NF5}.Range("F3").NumberFormat', f'V: {NF5}.Rows(3).NumberFormat', f'S: {NF5}.Range("D3").NumberFormat',
+  f'{NF5}.Range("A5:C1048576").NumberFormat = "0.000"', f'S: {NF5}.Range("B4").NumberFormat', f'S: {NF5}.Range("B6").NumberFormat',
+  f'S: {NF5}.UsedRange.Address')
+T("TNumFmt", "nf_filtered", flt("F43"), f'{W("F43")}.Range("E2:E13").NumberFormat = "0.0"', f'{W("F43")}.Columns("F").NumberFormat = "0.00"',
+  f'{W("F43")}.Range("G1:G13").Value = 1', f'{W("F43")}.ShowAllData', f'S: NFJoin({W("F43")}, 5, 13)', f'S: NFJoin({W("F43")}, 6, 13)',
+  f'S: ColJoin({W("F43")}, 7, 13)')
+T("TNumFmt", "nf_date", f'{NF6}.Range("A1").Value = 45296.5', f'{NF6}.Range("A1").NumberFormat = "dd/mm/yyyy hh:mm"', f'S: TypeName({NF6}.Range("A1").Value)',
+  f'{NF6}.Range("A1").NumberFormat = "hh:mm"', f'S: TypeName({NF6}.Range("A1").Value)', f'{NF6}.Range("A1").NumberFormat = "mmm"',
+  f'S: TypeName({NF6}.Range("A1").Value)', f'{NF6}.Range("A1").NumberFormat = "General"', f'S: TypeName({NF6}.Range("A1").Value)',
+  f'{NF6}.Range("A1").NumberFormat = "[$-409]mmmm d, yyyy;@"', f'S: TypeName({NF6}.Range("A1").Value)', f'{NF6}.Range("A2").Formula = "=A1+1"',
+  f'{NF6}.Range("A2").NumberFormat = "yyyy-mm-dd"', f'S: TypeName({NF6}.Range("A2").Value)', f'{NF6}.Range("A3").NumberFormat = "dd/mm/yyyy"',
+  f'{NF6}.Range("A3").Value = 5', f'S: {NF6}.Range("A3").NumberFormat', f'S: TypeName({NF6}.Range("A3").Value)',
+  f'{NF6}.Range("A4").NumberFormat = "0.00"', f'{NF6}.Range("A4").Value = DateSerial(2024, 1, 5)', f'S: {NF6}.Range("A4").NumberFormat',
+  f'S: TypeName({NF6}.Range("A4").Value)')
+T("TNumFmt", "nf_args", f'E: {NF6}.Range("C1").NumberFormat = 0', f'S: {NF6}.Range("C1").NumberFormat', f'E: {NF6}.Range("C2").NumberFormat = Null',
+  f'S: {NF6}.Range("C2").NumberFormat', f'E: {NF6}.Range("C3").NumberFormat = Empty', f'S: {NF6}.Range("C3").NumberFormat',
+  f'E: {NF6}.Range("C4").NumberFormat = True', f'S: {NF6}.Range("C4").NumberFormat', f'E: {NF6}.Range("C5").NumberFormat = 0.5',
+  f'S: {NF6}.Range("C5").NumberFormat')
+T("TNumFmt", "nf_array", f'E: {NF6}.Range("C6:C7").NumberFormat = Array("0.00", "0%")', f'S: {NF6}.Range("C6").NumberFormat')
+
+
+# --- sheets hidden and shown
+T("TSheets", "vis_values", ws_("V1"), "ws.Visible = False", "V: ws.Visible", "ws.Visible = xlSheetVeryHidden", "V: ws.Visible", "ws.Visible = True",
+  "V: ws.Visible", "ws.Visible = 0", "V: ws.Visible", "E: ws.Visible = 1", "V: ws.Visible", "E: ws.Visible = 5", "V: ws.Visible",
+  'E: ws.Visible = "False"', "V: ws.Visible", "E: ws.Visible = -1", "V: ws.Visible", "ws.Visible = xlSheetVisible")
+T("TSheets", "vis_use", ws_("V2"), "ws.Visible = False", 'ws.Range("A1").Value = 7', 'N: ws.Range("A1").Value', "E: ws.Activate", "E: ws.Select",
+  'E: ws.Range("A1").Select', "S: ActiveSheet.Name", "V: ws.Index", "S: Sheets(ws.Index).Name", "ws.Visible = True")
+T("TSheets", "vis_active", 'Sheets("V4").Activate', 'Sheets("V4").Visible = False', "S: ActiveSheet.Name", 'Sheets("V4").Visible = True',
+  'Sheets("V5").Visible = False', 'Sheets("V4").Activate', 'Sheets("V4").Visible = False', "S: ActiveSheet.Name", 'Sheets("V4").Visible = True',
+  'Sheets("V5").Visible = True', 'Sheets("V6").Activate', 'Sheets("V6").Visible = False', "S: ActiveSheet.Name", 'Sheets("V6").Visible = True',
+  f'{W("Out")}.Activate', "S: ActiveSheet.Name")
+T("TSheets", "vis_group", 'Sheets(Array("V3", "V4")).Select', 'Sheets("V3").Visible = False', "S: ActiveSheet.Name", 'Sheets("V3").Visible = True',
+  f'{W("Out")}.Select', "S: ActiveSheet.Name")
+
+
+# --- protection
+def legacy_hash(password):
+    """The password hash of a sheet protected the old way: 16 bits."""
+    h = 0
+    for i, ch in enumerate(password, 1):
+        v = ord(ch) << i
+        h ^= (v & 0x7FFF) | (v >> 15)
+    return f"{h ^ len(password) ^ 0xCE4B:04X}"
+
+
+def sha512_hash(password, salt, spin):
+    h = hashlib.sha512(salt + password.encode("utf-16-le")).digest()
+    for i in range(spin):
+        h = hashlib.sha512(h + i.to_bytes(4, "little")).digest()
+    return base64.b64encode(h).decode()
+
+
+_SALT = b"macropress-probe"
+PROTECTED = {
+    "PRL": f'<sheetProtection password="{legacy_hash("secret")}" sheet="1" objects="1" scenarios="1"/>',
+    "PRS": f'<sheetProtection algorithmName="SHA-512" hashValue="{sha512_hash("secret", _SALT, 100000)}" '
+           f'saltValue="{base64.b64encode(_SALT).decode()}" spinCount="100000" sheet="1" objects="1" scenarios="1"/>',
+    "PRO": '<sheetProtection sheet="1" objects="1" scenarios="1" formatCells="0"/>',
+    "PRO2": '<sheetProtection sheet="1" objects="1" scenarios="1" formatCells="0"/>',
+}
+PR_ROWS = [[1, (2, "unlocked"), 3, 4], [5], [6], [7], [8]]
+T("TProtect", "pr_basic", ws_("PR1"), 'ws.Protect "pw"', "V: ws.ProtectContents", 'E: ws.Range("A1").Value = 5', 'E: ws.Range("B1").Value = 5',
+  'V: ws.Range("B1").Value', 'V: ws.Range("A1").Value', 'E: ws.Range("A1:B1").Value = 7', 'V: ws.Range("B1").Value', 'E: ws.Range("A1").ClearContents',
+  'E: ws.Range("B1").ClearContents', 'E: ws.Range("A1").NumberFormat = "0.00"', 'E: ws.Range("B1").NumberFormat = "0.00"', 'E: ws.Unprotect "wrong"',
+  'E: ws.Unprotect "pw"', "V: ws.ProtectContents")
+T("TProtect", "pr_ops", ws_("PR2"), 'ws.Protect "pw"', 'E: ws.Range("A1").Locked = False', 'E: ws.Range("A1").Formula = "=1+1"',
+  'E: ws.Range("C1").Copy ws.Range("A2")', 'E: ws.Range("C1").Copy ws.Range("B1")', 'V: ws.Range("B1").Value', "E: ws.Rows(3).Hidden = True",
+  'E: ws.Range("A2:A5").Sort Key1:=ws.Range("A2"), Order1:=xlDescending, Header:=xlNo', "S: ColJoin(ws, 1, 5)", 'E: ws.Range("A1:D5").AutoFilter',
+  'E: ws.Name = "PR2x"', "S: ws.Name", 'ws.Name = "PR2"', "E: ws.Calculate", 'V: ws.Range("A1").Locked', 'V: ws.Range("B1").Locked',
+  'V: ws.Range("A1:B1").Locked', 'ws.Unprotect "pw"')
+T("TProtect", "pr_uionly", ws_("PR3"), 'ws.Protect "pw", UserInterfaceOnly:=True', 'E: ws.Range("A1").Value = 5', 'E: ws.Range("A1").NumberFormat = "0.00"',
+  "E: ws.Rows(3).Hidden = True", "V: ws.Rows(3).Hidden", 'E: ws.Range("A2:A5").Sort Key1:=ws.Range("A2"), Order1:=xlDescending, Header:=xlNo',
+  "S: ColJoin(ws, 1, 5)", 'E: ws.Range("A1").Locked = False', "V: ws.ProtectContents", "V: ws.ProtectionMode",
+  'E: ws.Range("A1:D5").AutoFilter Field:=1, Criteria1:="5"', "V: ws.AutoFilterMode", "ws.AutoFilterMode = False", "ws.Rows(3).Hidden = False",
+  'ws.Unprotect "pw"', "V: ws.ProtectionMode", "V: ws.ProtectContents")
+T("TProtect", "pr_allow", ws_("PR4"), 'ws.Protect "pw", AllowFormattingCells:=True', 'E: ws.Range("A1").NumberFormat = "0.00"',
+  'S: ws.Range("A1").NumberFormat', 'E: ws.Range("A1").Value = 9', "V: ws.Protection.AllowFormattingCells", "E: ws.Rows(3).Hidden = True",
+  'ws.Unprotect "pw"', 'ws.Protect "pw", AllowFormattingRows:=True, AllowFormattingColumns:=True', "E: ws.Rows(3).Hidden = True",
+  "E: ws.Columns(5).Hidden = True", "V: ws.Protection.AllowFormattingCells", 'E: ws.Range("A1").NumberFormat = "0%"', 'ws.Unprotect "pw"',
+  "ws.Rows(3).Hidden = False", "ws.Columns(5).Hidden = False")
+T("TProtect", "pr_filter", ws_("PR5"), 'ws.Range("A1:E13").AutoFilter', 'ws.Protect "pw", AllowFiltering:=True',
+  'E: ws.Range("A1:E13").AutoFilter Field:=2, Criteria1:="North"', "S: Vis(ws)", "E: ws.ShowAllData", "S: Vis(ws)", 'E: ws.Range("A1:E13").AutoFilter',
+  "V: ws.AutoFilterMode", 'ws.Unprotect "pw"', 'ws.Protect "pw"', 'E: ws.Range("A1:E13").AutoFilter Field:=2, Criteria1:="North"', "S: Vis(ws)",
+  'ws.Unprotect "pw"', "ws.AutoFilterMode = False")
+T("TProtect", "pr_twice", ws_("PR6"), 'ws.Protect "pw"', 'E: ws.Protect "other"', 'E: ws.Unprotect "pw"', "V: ws.ProtectContents",
+  'E: ws.Unprotect "other"', "V: ws.ProtectContents", "ws.Protect", "E: ws.Unprotect", "V: ws.ProtectContents", 'ws.Protect ""',
+  'E: ws.Unprotect ""', "V: ws.ProtectContents", 'ws.Protect "pw"', 'E: ws.Protect "pw", AllowFormattingCells:=True',
+  "V: ws.Protection.AllowFormattingCells", 'E: ws.Range("A1").NumberFormat = "0.00"', 'E: ws.Unprotect "pw"', "V: ws.ProtectContents",
+  'E: ws.Unprotect "pw"')
+for sheet in ("PRL", "PRS"):
+    T("TProtect", f"pr_file_{sheet.lower()}", ws_(sheet), "V: ws.ProtectContents", 'E: ws.Range("A1").Value = 1', 'E: ws.Range("B1").Value = 1',
+      'V: ws.Range("B1").Locked', 'E: ws.Unprotect "wrong"', "V: ws.ProtectContents", 'E: ws.Unprotect "secret"', "V: ws.ProtectContents",
+      'E: ws.Range("A1").Value = 1', 'E: ws.Protect "secret"', "V: ws.ProtectContents", 'E: ws.Unprotect "secret"')
+T("TProtect", "pr_file_options", ws_("PRO"), "V: ws.ProtectContents", "V: ws.Protection.AllowFormattingCells", 'E: ws.Range("A1").NumberFormat = "0.00"',
+  'E: ws.Range("A1").Value = 1', "V: ws.ProtectDrawingObjects", "E: ws.Unprotect", "V: ws.ProtectContents", 'E: ws.Range("A1").Value = 1')
+T("TProtect", "pr_locked", ws_("PR7"), 'V: ws.Range("A1").Locked', 'V: ws.Range("B1").Locked', 'V: ws.Range("A1:B1").Locked',
+  'ws.Range("C1").Locked = False', 'V: ws.Range("C1").Locked', 'ws.Columns("F").Locked = False', 'V: ws.Range("F7").Locked',
+  'V: ws.Columns("F").Locked', 'ws.Range("C1").Clear', 'V: ws.Range("C1").Locked', 'ws.Range("F7").Value = 1', 'ws.Range("F7").ClearContents',
+  'V: ws.Range("F7").Locked', 'ws.Range("B1").Copy ws.Range("G1")', 'V: ws.Range("G1").Locked', 'ws.Range("B1").Copy',
+  'ws.Range("G2").PasteSpecial xlPasteValues', 'V: ws.Range("G2").Locked', "Application.CutCopyMode = False", 'ws.Range("A1").Copy ws.Range("F8")',
+  'V: ws.Range("F8").Locked', 'ws.Protect "pw"', 'E: ws.Range("F7").Value = 3', 'E: ws.Range("G1").Value = 3', 'E: ws.Range("F9").Value = 3',
+  'ws.Unprotect "pw"')
+T("TProtect", "pr_book", ws_("PB"), 'ThisWorkbook.Protect "pw", True', "V: ThisWorkbook.ProtectStructure", 'E: ws.Name = "PBx"', "E: ws.Visible = False",
+  "V: ws.Visible", 'E: ws.Range("A1").Value = 1', 'E: ws.Protect "x"', "V: ws.ProtectContents", 'ws.Unprotect "x"', 'E: ThisWorkbook.Unprotect "wrong"',
+  "V: ThisWorkbook.ProtectStructure", 'E: ThisWorkbook.Unprotect "pw"', "V: ThisWorkbook.ProtectStructure", 'E: ws.Name = "PBx"', "S: ws.Name",
+  'ws.Name = "PB"', "ws.Visible = True")
+
+
+# --- FormulaR1C1
+RC, RCE = W("RC"), W("RCE")
+T("TR1C1", "rc_read", f'{RC}.Range("D5").Formula = "=A1+B$2+$A1+$C$3"', f'S: {RC}.Range("D5").FormulaR1C1',
+  f'{RC}.Range("D6").Formula = "=SUM(A1:B2)+SUM(A:A)+SUM($A:$B)+SUM(1:1)+SUM($2:$3)"', f'S: {RC}.Range("D6").FormulaR1C1',
+  f'{RC}.Range("D7").Formula = "=RCData!A1+\'My R1C1\'!$B$2"', f'S: {RC}.Range("D7").FormulaR1C1',
+  f'{RC}.Range("D8").Formula = "=ROUND(D5,2)&""RC[1]"""', f'S: {RC}.Range("D8").FormulaR1C1', f'{RC}.Range("D9").Value = 5',
+  f'S: {RC}.Range("D9").FormulaR1C1', f'S: {RC}.Range("D10").FormulaR1C1', f'{RC}.Range("D11").Formula = "=SUM(D5:D5)"',
+  f'S: {RC}.Range("D11").FormulaR1C1', f'{RC}.Range("D12").Formula = "=D11"', f'S: {RC}.Range("D12").FormulaR1C1', f'{RC}.Range("D13").Value = "abc"',
+  f'S: {RC}.Range("D13").FormulaR1C1', f'{RC}.Range("D14").Value = True', f'S: {RC}.Range("D14").FormulaR1C1', f'S: {RC}.Range("D5").Formula2R1C1')
+T("TR1C1", "rc_write", f'{RC}.Range("F5").FormulaR1C1 = "=R[-1]C[-1]+R1C1+R[-4]C1+R2C[-2]"', f'S: {RC}.Range("F5").Formula',
+  f'{RC}.Range("F6").FormulaR1C1 = "=SUM(R1C1:R[-1]C[-1])"', f'S: {RC}.Range("F6").Formula', f'{RC}.Range("F7").FormulaR1C1 = "=SUM(C[-5])+SUM(R[-6])"',
+  f'S: {RC}.Range("F7").Formula', f'{RC}.Range("F8").FormulaR1C1 = "=SUM(C1:C2)+SUM(R1:R2)"', f'S: {RC}.Range("F8").Formula',
+  f'{RC}.Range("F9").FormulaR1C1 = "=RCData!RC[-5]+\'My R1C1\'!R1C1"', f'S: {RC}.Range("F9").Formula',
+  f'{RC}.Range("F10").FormulaR1C1 = "=ROUND(R[-5]C,2)&""R1C1"""', f'S: {RC}.Range("F10").Formula', f'{RC}.Range("F11").FormulaR1C1 = "=r[-1]c+1"',
+  f'S: {RC}.Range("F11").Formula', f'{RC}.Range("F12").FormulaR1C1 = "=COUNT(R[-11]C[-5]:R[-1]C[-5])"', f'S: {RC}.Range("F12").Formula',
+  f'V: {RC}.Range("F12").Value', f'V: {RC}.Range("F5").Value', f'S: {RC}.Range("F12").FormulaR1C1')
+T("TR1C1", "rc_fill", f'{RC}.Range("H2:H4").FormulaR1C1 = "=RC[-7]*2"', f'S: {RC}.Range("H4").Formula', f'V: {RC}.Range("H4").Value',
+  f'{RC}.Range("I2:J3").FormulaR1C1 = "=R1C[-7]+R[-1]C1"', f'S: {RC}.Range("J3").Formula', f'S: {RC}.Range("I2").Formula',
+  f'{RC}.Range("K2:K3").Formula2R1C1 = "=R[-1]C[-10]"', f'S: {RC}.Range("K3").Formula', f'V: {RC}.Range("K3").Value')
+T("TR1C1", "rc_wrap", f'E: {RCE}.Range("A1").FormulaR1C1 = "=R[-1]C"', f'S: {RCE}.Range("A1").Formula', f'E: {RCE}.Range("A2").FormulaR1C1 = "=RC[-1]"',
+  f'S: {RCE}.Range("A2").Formula', f'E: {RCE}.Range("B3").FormulaR1C1 = "=R[1048575]C"', f'S: {RCE}.Range("B3").Formula',
+  f'E: {RCE}.Range("B4").FormulaR1C1 = "=R[-5]C[-3]"', f'S: {RCE}.Range("B4").Formula', f'{RCE}.Range("C5").Formula = "=C1048576"',
+  f'S: {RCE}.Range("C5").FormulaR1C1', f'{RCE}.Range("C6").Formula = "=XFD6"', f'S: {RCE}.Range("C6").FormulaR1C1')
+T("TR1C1", "rc_bad", f'E: {RCE}.Range("D1").FormulaR1C1 = "=R0C1"', f'S: {RCE}.Range("D1").Formula', f'E: {RCE}.Range("D2").FormulaR1C1 = "=R1048577C1"',
+  f'S: {RCE}.Range("D2").Formula', f'E: {RCE}.Range("D4").Formula = "=R1C1"',
+  f'S: {RCE}.Range("D4").Formula', f'V: {RCE}.Range("D4").Value', f'E: {RCE}.Range("D5").Formula = "=R[-1]C"', f'S: {RCE}.Range("D5").Formula',
+  f'E: {RCE}.Range("D6").FormulaR1C1 = "=R1C16385"', f'S: {RCE}.Range("D6").Formula', f'E: {RCE}.Range("D7").FormulaR1C1 = "=SUM(R1C1:R2)"',
+  f'S: {RCE}.Range("D7").Formula')
+T("TR1C1", "rc_a1", f'E: {RCE}.Range("D3").FormulaR1C1 = "=A1+1"', f'S: {RCE}.Range("D3").Formula')
+T("TR1C1", "rc_text", f'{TXS}.Range("A18").FormulaR1C1 = "=R1C1"', f'V: {TXS}.Range("A18").Value', f'S: {TXS}.Range("A18").FormulaR1C1',
+  f'{RC}.Range("L1").FormulaR1C1 = 5', f'V: {RC}.Range("L1").Value', f'{RC}.Range("L2").FormulaR1C1 = "abc"', f'V: {RC}.Range("L2").Value',
+  f'{RC}.Range("L3").FormulaR1C1 = "5%"', f'V: {RC}.Range("L3").Value', f'S: {RC}.Range("L3").NumberFormat', f'{RC}.Range("L4").FormulaR1C1 = ""',
+  f'V: {RC}.Range("L4").Value')
+T("TR1C1", "rc_words", f'{RC}.Range("N5").FormulaR1C1 = "=ROUND(RC[-13],0)+COUNT(R1C1:R2C2)"', f'S: {RC}.Range("N5").Formula', f'V: {RC}.Range("N5").Value',
+  f'{RC}.Range("N6").Formula = "=ROUND(A6,0)+COUNTA(A1:B2)"', f'S: {RC}.Range("N6").FormulaR1C1', f'{RC}.Range("N7").Formula = "=TRUE"',
+  f'S: {RC}.Range("N7").FormulaR1C1', f'{RC}.Range("N8").FormulaR1C1 = "=IF(TRUE,R1C1,R2C2)"', f'S: {RC}.Range("N8").Formula',
+  f'{RC}.Range("N9").FormulaR1C1 = "=RCData!R1C1:R2C2"', f'S: {RC}.Range("N9").Formula')
+
+
+# --- filling
+FL1, FL2, FL3, PL, PL2 = W("FL1"), W("FL2"), W("FL3"), W("PL"), W("PL2")
+T("TFill", "fill_down", f'{FL1}.Range("A1").Value = 5', f'{FL1}.Range("B1").Formula = "=A1*2"', f'{FL1}.Range("C1").Value = "x"',
+  f'{FL1}.Range("A1").NumberFormat = "0.00"', f'{FL1}.Range("A3").NumberFormat = "0%"', f'{FL1}.Range("C3").Value = "old"', f'{FL1}.Range("A1:C4").FillDown',
+  f'S: ColJoin({FL1}, 1, 5)', f'S: FJoin({FL1}, 2, 5)', f'V: {FL1}.Range("B4").Value', f'S: ColJoin({FL1}, 3, 5)', f'S: NFJoin({FL1}, 1, 5)',
+  f'S: {FL1}.Range("A4").Text')
+T("TFill", "fill_one", f'{FL2}.Range("A1").Value = 1', f'{FL2}.Range("A2").Value = 2', f'{FL2}.Range("A2").FillDown', f'V: {FL2}.Range("A2").Value',
+  f'{FL2}.Range("B2").Formula = "=A2+1"', f'{FL2}.Range("B3").FillDown', f'S: {FL2}.Range("B3").Formula', f'E: {FL2}.Range("C1").FillDown',
+  f'V: {FL2}.Range("C1").Value', f'{FL2}.Range("D1").Value = 4', f'E: {FL2}.Range("D1").FillDown', f'V: {FL2}.Range("D1").Value',
+  f'{FL2}.Range("E3").Value = 6', f'{FL2}.Range("F3").FillRight', f'V: {FL2}.Range("F3").Value', f'{FL2}.Range("A5").Value = 8',
+  f'E: {FL2}.Range("A5").FillRight', f'V: {FL2}.Range("A5").Value')
+T("TFill", "fill_dirs", f'{FL3}.Range("A1").Value = 3', f'{FL3}.Range("A2").Formula = "=A1+1"', f'{FL3}.Range("A1:D2").FillRight', f'S: {FL3}.Range("D2").Formula',
+  f'V: {FL3}.Range("D1").Value', f'{FL3}.Range("F5").Formula = "=F6*2"', f'{FL3}.Range("F6").Value = 4', f'{FL3}.Range("F2:F5").FillUp', f'S: FJoin({FL3}, 6, 6)',
+  f'V: {FL3}.Range("F2").Value', f'{FL3}.Range("K8").Value = 9', f'{FL3}.Range("H8:K8").FillLeft', f'S: RowJoin({FL3}, 8, 12)')
+T("TFill", "fill_filtered", flt("F44"), f'{W("F44")}.Range("E2:E13").FillDown', f'{W("F44")}.ShowAllData', f'S: ColJoin({W("F44")}, 5, 13)')
+T("TFill", "paste_tile", f'{PL}.Range("A1").Value = 1', f'{PL}.Range("A1").Copy {PL}.Range("C1:D3")', f'S: ColJoin({PL}, 3, 4)', f'S: ColJoin({PL}, 4, 4)',
+  f'{PL}.Range("A2").Formula = "=A1+1"', f'{PL}.Range("A2").Copy {PL}.Range("F2:F4")', f'S: FJoin({PL}, 6, 5)', f'{PL}.Range("H1").Value = "a"',
+  f'{PL}.Range("H2").Value = "b"', f'E: {PL}.Range("H1:H2").Copy {PL}.Range("J1:J4")', f'S: ColJoin({PL}, 10, 5)',
+  f'E: {PL}.Range("H1:H2").Copy {PL}.Range("K1:K3")', f'S: ColJoin({PL}, 11, 4)', f'E: {PL}.Range("H1:H2").Copy {PL}.Range("L1:N1")',
+  f'S: ColJoin({PL}, 12, 3) & ColJoin({PL}, 13, 3)', f'E: {PL}.Range("H1:H2").Copy {PL}.Range("P1:Q4")', f'S: ColJoin({PL}, 17, 5)')
+T("TFill", "paste_tile2", f'{PL2}.Range("A1").Value = 1', f'{PL2}.Range("B1").Value = 2', f'{PL2}.Range("A2").Value = 3', f'{PL2}.Range("B2").Value = 4',
+  f'E: {PL2}.Range("A1:B2").Copy {PL2}.Range("D1:G3")', f'S: RowJoin({PL2}, 1, 8)', f'S: RowJoin({PL2}, 3, 8)', f'{PL2}.Range("A1:B2").Copy',
+  f'E: {PL2}.Range("D6:G9").PasteSpecial xlPasteValues', f'S: RowJoin({PL2}, 9, 8)', f'E: {PL2}.Range("A12:C12").PasteSpecial xlPasteValues',
+  f'S: RowJoin({PL2}, 12, 4)', f'S: RowJoin({PL2}, 13, 4)', "Application.CutCopyMode = False", f'{PL2}.Range("A1").Copy', f'{PL2}.Range("Z1").Value = 5',
+  "V: Application.CutCopyMode", f'E: {PL2}.Range("A20").PasteSpecial xlPasteValues', f'V: {PL2}.Range("A20").Value', "Application.CutCopyMode = False")
+AF1, AF2, AF3 = W("AF1"), W("AF2"), W("AF3")
+T("TFill", "af_copy", f'{AF1}.Range("A1").Value = 5', f'{AF1}.Range("A1").NumberFormat = "0.00"', f'{AF1}.Range("A1").AutoFill Destination:={AF1}.Range("A1:A4")',
+  f'S: ColJoin({AF1}, 1, 5)', f'S: NFJoin({AF1}, 1, 4)', f'{AF1}.Range("B1").Formula = "=A1*10"', f'{AF1}.Range("B1").AutoFill {AF1}.Range("B1:B4")',
+  f'S: FJoin({AF1}, 2, 5)', f'{AF1}.Range("C1").Value = "x"', f'{AF1}.Range("C1").AutoFill {AF1}.Range("C1:C3")', f'S: ColJoin({AF1}, 3, 4)',
+  f'{AF1}.Range("D1").Value = True', f'{AF1}.Range("D1").AutoFill {AF1}.Range("D1:D3")', f'S: ColJoin({AF1}, 4, 3)',
+  f'{AF1}.Range("E1").Value = CVErr(xlErrNA)', f'{AF1}.Range("E1").AutoFill {AF1}.Range("E1:E3")', f'S: ColJoin({AF1}, 5, 3)',
+  f'{AF1}.Range("G3").Value = 2', f'{AF1}.Range("G1").AutoFill {AF1}.Range("G1:G3")', f'S: ColJoin({AF1}, 7, 3)', f'V: {AF1}.Range("A1").AutoFill({AF1}.Range("A1:A2"))')
+T("TFill", "af_more", f'{AF2}.Range("A1").Value = 1', f'{AF2}.Range("A2").Value = 10', f'{AF2}.Range("B1").Formula = "=A1+1"', f'{AF2}.Range("B2").Formula = "=A2*2"',
+  f'{AF2}.Range("B1:B2").AutoFill {AF2}.Range("B1:B6")', f'S: FJoin({AF2}, 2, 6)', f'{AF2}.Range("D6").Formula = "=D7+1"', f'{AF2}.Range("D7").Value = 1',
+  f'{AF2}.Range("D6").AutoFill {AF2}.Range("D3:D6")', f'S: FJoin({AF2}, 4, 7)', f'{AF2}.Range("H2").Formula = "=I2*2"', f'{AF2}.Range("H2").AutoFill {AF2}.Range("F2:H2")',
+  f'S: {AF2}.Range("F2").Formula', f'{AF2}.Range("A10").Formula = "=B10"', f'{AF2}.Range("B10").Value = 3', f'{AF2}.Range("A10:B10").AutoFill {AF2}.Range("A10:B12")',
+  f'S: FJoin({AF2}, 1, 12)', f'S: ColJoin({AF2}, 2, 12)', f'E: {AF2}.Range("A1").AutoFill {AF2}.Range("C1:C4")',
+  f'E: {AF2}.Range("A1").AutoFill {AF2}.Range("A1")', f'V: {AF2}.Range("A1").Value', f'E: {AF2}.Range("A1:B1").AutoFill {AF2}.Range("A1:A5")')
+T("TFill", "af_types", f'{AF3}.Range("A1").Value = 1', f'{AF3}.Range("A2").Value = 2', f'{AF3}.Range("A1:A2").AutoFill {AF3}.Range("A1:A6"), xlFillCopy',
+  f'S: ColJoin({AF3}, 1, 6)', f'{AF3}.Range("B1").Value = 5', f'{AF3}.Range("B1").NumberFormat = "0.0"', f'{AF3}.Range("B3").Value = 9',
+  f'{AF3}.Range("B1").AutoFill {AF3}.Range("B1:B3"), xlFillFormats', f'S: ColJoin({AF3}, 2, 3)', f'S: NFJoin({AF3}, 2, 3)', f'{AF3}.Range("C1").Formula = "=A1*3"',
+  f'{AF3}.Range("C1").NumberFormat = "0.0"', f'{AF3}.Range("C1").AutoFill {AF3}.Range("C1:C3"), xlFillValues', f'S: FJoin({AF3}, 3, 3)',
+  f'S: NFJoin({AF3}, 3, 3)', f'{AF3}.Range("D1").Value = "Item"', f'{AF3}.Range("D1").AutoFill {AF3}.Range("D1:D3"), xlFillCopy', f'S: ColJoin({AF3}, 4, 3)',
+  f'{AF3}.Range("E1").Value = "Item 1"', f'{AF3}.Range("E1").AutoFill {AF3}.Range("E1:E3"), xlFillCopy', f'S: ColJoin({AF3}, 5, 3)')
+SERIES = [("numbers", ["1", "2"], "A1:A2", "A1:A5", 5, None), ("trend", ["1", "2", "4"], "A1:A3", "A1:A5", 5, None),
+          ("date", ["DateSerial(2024, 1, 30)"], "A1", "A1:A3", 3, None), ("item", ['"Item 1"'], "A1", "A1:A3", 3, None),
+          ("month", ['"Jan"'], "A1", "A1:A3", 3, None), ("weekday", ['"Mon"'], "A1", "A1:A3", 3, None),
+          ("quarter", ['"Q1"'], "A1", "A1:A5", 5, None), ("fillseries", ["1"], "A1", "A1:A3", 3, "xlFillSeries"),
+          ("days", ["DateSerial(2024, 1, 30)"], "A1", "A1:A3", 3, "xlFillDays"), ("text2", ['"a"', '"b"'], "A1:A2", "A1:A5", 5, None)]
+for k, (name, values, source, dest, n, kind) in enumerate(SERIES, 1):
+    sheet = W(f"AS{k}")
+    T("TFill", f"af_s_{name}", *[f"{sheet}.Cells({i}, 1).Value = {v}" for i, v in enumerate(values, 1)],
+      f'{sheet}.Range("{source}").AutoFill {sheet}.Range("{dest}")' + (f", {kind}" if kind else ""), f"S: ColJoin({sheet}, 1, {n})")
+
+# --- cut
+CT = {i: W(f"CT{i}") for i in range(1, 9)}
+T("TCut", "cut_refs", f'{CT[1]}.Range("A1").Value = 1', f'{CT[1]}.Range("A2").Value = 2', f'{CT[1]}.Range("A1").NumberFormat = "0.00"',
+  f'{CT[1]}.Range("B1").Formula = "=A1*10"', f'{CT[1]}.Range("B2").Formula = "=SUM(A1:A2)"', f'{CT[1]}.Range("B3").Formula = "=SUM(A1:A5)"',
+  f'{CT[1]}.Range("B4").Formula = "=C1"', f'{CT[1]}.Range("B5").Formula = "=SUM(C1:C5)"', f'{CT[1]}.Range("B6").Formula = "=SUM(C1:C2)"',
+  f'{CT[1]}.Range("B7").Formula = "=$A$1+A$2"', f'{CT[1]}.Range("C1").Value = 9', f'{CT[1]}.Range("A1:A2").Cut Destination:={CT[1]}.Range("C1")',
+  f'S: FJoin({CT[1]}, 2, 7)', f'S: ColJoin({CT[1]}, 1, 2)', f'S: ColJoin({CT[1]}, 3, 2)', f'S: NFJoin({CT[1]}, 1, 2)', f'S: NFJoin({CT[1]}, 3, 2)',
+  f'V: {CT[1]}.Range("B1").Value', f'V: {CT[1]}.Range("B2").Value', "V: Application.CutCopyMode")
+T("TCut", "cut_inside", f'{CT[2]}.Range("A1").Value = 5', f'{CT[2]}.Range("A2").Formula = "=A1+1"', f'{CT[2]}.Range("A3").Formula = "=B1"',
+  f'{CT[2]}.Range("B1").Value = 7', f'{CT[2]}.Range("A4").Formula = "=SUM(A1:A2)"', f'{CT[2]}.Range("A1:A4").Cut {CT[2]}.Range("D4")',
+  f'S: FJoin({CT[2]}, 4, 8)', f'S: ColJoin({CT[2]}, 4, 8)', f'S: FJoin({CT[2]}, 1, 4)')
+T("TCut", "cut_overlap", f'{CT[3]}.Range("A1").Value = 1', f'{CT[3]}.Range("A2").Value = 2', f'{CT[3]}.Range("A3").Value = 3',
+  f'{CT[3]}.Range("B1").Formula = "=SUM(A1:A3)"', f'{CT[3]}.Range("B2").Formula = "=A3"', f'{CT[3]}.Range("B3").Formula = "=A4"',
+  f'{CT[3]}.Range("A1:A3").Cut {CT[3]}.Range("A2")', f'S: ColJoin({CT[3]}, 1, 4)', f'S: FJoin({CT[3]}, 2, 3)')
+T("TCut", "cut_sheets", f'{CT[4]}.Range("A1").Value = 3', f'{CT[4]}.Range("B1").Formula = "=A1*2"', f'{CT[5]}.Range("A1").Formula = "=CT4!A1+1"',
+  f'{CT[4]}.Range("A1").Cut {CT[5]}.Range("C3")', f'S: {CT[4]}.Range("B1").Formula', f'S: FJoin({CT[5]}, 1, 1)', f'V: {CT[5]}.Range("A1").Value',
+  f'V: {CT[4]}.Range("B1").Value', f'V: {CT[5]}.Range("C3").Value')
+T("TCut", "cut_sheets_range", f'{W("CT11")}.Range("A1").Value = 3', f'{W("CT12")}.Range("A2").Formula = "=SUM(CT11!A1:A2)"',
+  f'{W("CT11")}.Range("A1").Cut {W("CT12")}.Range("C3")', f'S: {W("CT12")}.Range("A2").Formula')
+T("TCut", "cut_paste", f'{CT[6]}.Range("A1").Value = 4', f'{CT[6]}.Range("A2").Formula = "=A1*2"', f'{CT[6]}.Activate', f'{CT[6]}.Range("A1").Cut',
+  "V: Application.CutCopyMode", f'{CT[6]}.Range("D1").Select', "ActiveSheet.Paste", "V: Application.CutCopyMode", f'S: ColJoin({CT[6]}, 4, 1)',
+  f'S: {CT[6]}.Range("A2").Formula', f'{CT[6]}.Range("A2").Copy', f'{CT[6]}.Range("F2").Select', "ActiveSheet.Paste", f'S: {CT[6]}.Range("F2").Formula',
+  "V: Application.CutCopyMode", f"ActiveSheet.Paste Destination:={CT[6]}.Range(\"G5\")", f'S: {CT[6]}.Range("G5").Formula',
+  "Application.CutCopyMode = False", f'E: {CT[6]}.Range("A2").Cut', f'E: {CT[6]}.Range("H1").PasteSpecial xlPasteValues', f'V: {CT[6]}.Range("H1").Value',
+  "Application.CutCopyMode = False", f'S: {CT[6]}.Range("A2").Formula', f'{W("Out")}.Activate')
+T("TCut", "cut_sizes", f'{CT[7]}.Range("A1").Value = 1', f'{CT[7]}.Range("A2").Value = 2', f'E: {CT[7]}.Range("A1:A2").Cut {CT[7]}.Range("C1:C5")',
+  f'S: ColJoin({CT[7]}, 3, 5)', f'S: ColJoin({CT[7]}, 1, 2)', f'E: {CT[7]}.Range("C1:C2").Cut {CT[7]}.Range("E1:F1")', f'S: ColJoin({CT[7]}, 5, 2)',
+  f'S: ColJoin({CT[7]}, 3, 2)')
+T("TCut", "cut_filtered", flt("F45"), f'E: {W("F45")}.Range("E2:E13").Cut {W("F45")}.Range("G2")', f'{W("F45")}.ShowAllData',
+  f'S: ColJoin({W("F45")}, 7, 13)', f'S: ColJoin({W("F45")}, 5, 13)')
+T("TCut", "cut_rows", f'{CT[8]}.Range("A1").Value = 1', f'{CT[8]}.Range("B1").Value = 2', f'{CT[8]}.Range("A2").Formula = "=A1+B1"',
+  f'{CT[8]}.Rows(1).Cut {CT[8]}.Rows(5)', f'S: RowJoin({CT[8]}, 5, 3)', f'S: {CT[8]}.Range("A2").Formula', f'V: {CT[8]}.Range("A2").Value',
+  f'S: RowJoin({CT[8]}, 1, 3)')
+
+# --- what the first answers left open
+NF7 = W("NF7")
+T("TNumFmt", "nf_money", *[x for k, code in enumerate(["$#,##0.00", "\\$#,##0.00", '"$"#,##0.00', "[$$-409]#,##0.00", "£#,##0.00", "#,##0.00"], 1)
+                           for x in (f"{NF7}.Cells({k}, 1).Value = 1.5", f"{NF7}.Cells({k}, 1).NumberFormat = {q(code)}",
+                                     f"S: TypeName({NF7}.Cells({k}, 1).Value)")])
+T("TProtect", "pr_partial", ws_("PR8"), 'ws.Range("A1").Locked = False', 'ws.Range("B1").Locked = True', 'ws.Protect "pw"',
+  'E: ws.Range("A1:B1").Value = 7', 'V: ws.Range("A1").Value', 'E: ws.Range("A2:B2").Value = Array(8, 9)', 'V: ws.Range("A2").Value',
+  'ws.Unprotect "pw"', 'ws.Range("A3").Locked = False', 'ws.Range("A3").Value = 3', 'ws.Range("B3").Value = 4', 'ws.Protect "pw"',
+  'E: ws.Range("A3:B3").ClearContents', 'V: ws.Range("A3").Value', 'E: ws.Range("A4:B4").Formula = "=1+1"', 'V: ws.Range("A4").Value',
+  'ws.Range("D1").Value = 6', 'E: ws.Range("D1").Copy ws.Range("A5:B5")', 'V: ws.Range("A5").Value', 'ws.Unprotect "pw"')
+T("TProtect", "pr_paste_unlocked", ws_("PR9"), 'ws.Range("C1").NumberFormat = "0.00"', 'ws.Protect "pw"', 'E: ws.Range("C1").Copy ws.Range("B1")',
+  'V: ws.Range("B1").Locked', 'S: ws.Range("B1").NumberFormat', 'E: ws.Range("B1").ClearContents', 'E: ws.Range("C1:D1").Copy ws.Range("B1")',
+  'ws.Unprotect "pw"', 'ws.Protect "pw"', 'E: ws.Protect "other", AllowFormattingCells:=True', "V: ws.Protection.AllowFormattingCells",
+  'E: ws.Unprotect "other"', "V: ws.ProtectContents", 'E: ws.Unprotect "pw"', "V: ws.ProtectContents", 'ThisWorkbook.Protect "pw"',
+  "V: ThisWorkbook.ProtectStructure", "V: ThisWorkbook.ProtectWindows", 'ThisWorkbook.Unprotect "pw"', "V: ThisWorkbook.ProtectStructure")
+T("TProtect", "pr_fill", ws_("PR10"), 'ws.Range("B2").Locked = False', 'ws.Range("B3").Locked = False', 'ws.Protect "pw"',
+  'E: ws.Range("B1:B3").FillDown', 'V: ws.Range("B3").Value', 'E: ws.Range("A1:A3").FillDown', 'V: ws.Range("A3").Value',
+  'E: ws.Range("B1").AutoFill ws.Range("B1:B3")', 'E: ws.Range("B2").Cut ws.Range("B3")', 'V: ws.Range("B3").Value', 'ws.Unprotect "pw"')
+CT9, CT10 = W("CT9"), W("CT10")
+T("TCut", "cut_partial", *[f'{CT9}.Range("A{i}").Value = {i}' for i in range(1, 6)], f'{CT9}.Range("B1").Formula = "=SUM(A1:A5)"',
+  f'{CT9}.Range("B2").Formula = "=SUM(A1:A5)"', f'{CT9}.Range("B3").Formula = "=SUM(A2:A4)"', f'{CT9}.Range("B4").Formula = "=SUM(A1:B1)"',
+  f'{CT9}.Range("B5").Formula = "=SUM(A4:A5)"', f'{CT9}.Range("A4:A5").Cut {CT9}.Range("D1")', f'S: FJoin({CT9}, 2, 5)',
+  f'{CT9}.Range("A2:A3").Cut {CT9}.Range("D5")', f'S: FJoin({CT9}, 2, 5)')
+T("TCut", "cut_edge", f'{CT10}.Range("A1").Value = 1', f'{CT10}.Range("A2").Value = 2',
+  f'{CT10}.Range("A3").Value = 3', f'{CT10}.Range("B1").Formula = "=SUM(A1:A3)"', f'{CT10}.Range("B2").Formula = "=SUM(A1:A2)"',
+  f'{CT10}.Range("A3").Cut {CT10}.Range("A5")', f'S: FJoin({CT10}, 2, 2)', f'{CT10}.Range("A1").Cut {CT10}.Range("C1")', f'S: FJoin({CT10}, 2, 2)')
+T("TFill", "fill_back", f'{W("FL5")}.Range("B5").Value = 3', f'{W("FL5")}.Range("B4").FillUp', f'V: {W("FL5")}.Range("B4").Value',
+  f'{W("FL5")}.Range("D2").Value = 4', f'{W("FL5")}.Range("C2").FillLeft', f'V: {W("FL5")}.Range("C2").Value', f'{W("FL5")}.Range("B1048576").Value = 2',
+  f'E: {W("FL5")}.Range("B1048576").FillUp', f'{W("FL5")}.Range("XFD3").Value = 2', f'E: {W("FL5")}.Range("XFD3").FillLeft',
+  f'V: {W("FL5")}.Range("XFD3").Value')
+T("TFill", "fill_hidden", f'{W("FL4")}.Range("A1").Value = 5', f'{W("FL4")}.Rows(3).Hidden = True', f'{W("FL4")}.Range("A1:A4").FillDown',
+  f'S: ColJoin({W("FL4")}, 1, 4)', f'{W("FL4")}.Range("B1").Value = 7', f'{W("FL4")}.Range("B1").AutoFill {W("FL4")}.Range("B1:B4")',
+  f'S: ColJoin({W("FL4")}, 2, 4)', f'{W("FL4")}.Range("C1").Value = 1', f'{W("FL4")}.Range("C1").Copy {W("FL4")}.Range("C2:C4")',
+  f'S: ColJoin({W("FL4")}, 3, 4)', f'{W("FL4")}.Rows(3).Hidden = False')
+T("TFill", "af_filtered", flt("F46"), f'{W("F46")}.Range("E2").AutoFill {W("F46")}.Range("E2:E13")', f'{W("F46")}.ShowAllData',
+  f'S: ColJoin({W("F46")}, 5, 13)', f'{W("F46")}.Range("A1:E13").AutoFilter Field:=2, Criteria1:="North"',
+  f'{W("F46")}.Range("C2").Copy {W("F46")}.Range("F2:F13")', f'{W("F46")}.ShowAllData', f'S: ColJoin({W("F46")}, 6, 13)')
+T("TFill", "af_square", f'{W("AF5")}.Range("A1").Value = 1', f'{W("AF5")}.Range("A2").Value = 10',
+  f'E: {W("AF5")}.Range("A1:A2").AutoFill {W("AF5")}.Range("A1:C4")', f'S: ColJoin({W("AF5")}, 1, 4)', f'S: ColJoin({W("AF5")}, 2, 4)')
+T("TFill", "af_kinds", f'{W("AF4")}.Range("E1").Value = 4', f'{W("AF4")}.Range("E1").AutoFill {W("AF4")}.Range("E1:E3"), xlFillSeries', f'S: ColJoin({W("AF4")}, 5, 3)',
+  f'{W("AF4")}.Range("F1").Value = 2', f'{W("AF4")}.Range("F2").Value = 5', f'{W("AF4")}.Range("F1:F2").AutoFill {W("AF4")}.Range("F1:F4"), xlFillValues',
+  f'S: ColJoin({W("AF4")}, 6, 4)', f'{W("AF4")}.Range("G4").Value = 3', f'{W("AF4")}.Range("G5").Value = 5',
+  f'{W("AF4")}.Range("G4:G5").AutoFill {W("AF4")}.Range("G1:G5")', f'S: ColJoin({W("AF4")}, 7, 5)', f'{W("AF4")}.Range("H1").Value = 2.5',
+  f'{W("AF4")}.Range("H2").Formula = "=H1"', f'E: {W("AF4")}.Range("H1:H2").AutoFill {W("AF4")}.Range("H1:H4")', f'S: FJoin({W("AF4")}, 8, 4)')
+
+T("TProtect", "pr_again", ws_("PR11"), 'ws.Protect "pw", AllowFormattingCells:=True', 'ws.Protect "pw"', "V: ws.Protection.AllowFormattingCells",
+  'ws.Protect "pw", UserInterfaceOnly:=True', "V: ws.ProtectionMode", 'ws.Protect "pw"', "V: ws.ProtectionMode", 'ws.Protect UserInterfaceOnly:=True',
+  'E: ws.Unprotect "x"', "V: ws.ProtectContents", 'E: ws.Unprotect "pw"', "V: ws.ProtectContents", "ws.Protect", 'ws.Protect "pw"',
+  'E: ws.Unprotect "x"', "V: ws.ProtectContents", 'E: ws.Unprotect "pw"', 'ws.Protect "pw"', 'ws.Protect "other"', 'E: ws.Unprotect "other"',
+  "V: ws.ProtectContents", 'E: ws.Unprotect "pw"', "V: ws.ProtectContents")
+T("TProtect", "pr_file_again", ws_("PRO2"), "ws.Protect UserInterfaceOnly:=True", "V: ws.Protection.AllowFormattingCells", "V: ws.ProtectionMode",
+  'E: ws.Range("A1").Value = 3', "E: ws.Unprotect", "V: ws.ProtectContents")
+T("TProtect", "pr_more_ops", ws_("PR12"), 'ws.Range("B1:B3").Locked = False', 'ws.Range("B1").NumberFormat = "0.00"', 'ws.Range("B2").Value = 9',
+  'ws.Protect "pw"', 'E: ws.Range("B1:B2").FillDown', 'S: ws.Range("B2").NumberFormat',
+  'V: ws.Range("B2").Value', 'E: ws.Range("B1:B3").Sort Key1:=ws.Range("B1"), Order1:=xlDescending, Header:=xlNo', 'E: ws.Visible = False',
+  "V: ws.Visible", "ws.Visible = True", 'E: ws.Range("C1").Locked = False', 'ws.Unprotect "pw"', 'ws.Protect "pw", AllowSorting:=True, AllowFormattingCells:=True',
+  'E: ws.Range("B1:B3").Sort Key1:=ws.Range("B1"), Order1:=xlDescending, Header:=xlNo', 'S: ColJoin(ws, 2, 3)', 'E: ws.Range("C1").Locked = False',
+  'V: ws.Range("C1").Locked', 'ws.Unprotect "pw"')
+T("TProtect", "pr_clear", ws_("PR14"), 'ws.Range("B1:B3").Locked = False', 'ws.Range("B1:B2").NumberFormat = "0.00"', 'ws.Range("B1:B2").Value = 9',
+  'ws.Protect "pw"', 'E: ws.Range("B1").Clear', 'S: ws.Range("B1").NumberFormat', 'V: ws.Range("B1").Locked', 'V: ws.Range("B1").Value',
+  'E: ws.Range("B2").ClearContents', 'S: ws.Range("B2").NumberFormat', 'E: ws.Range("B3").Clear', 'V: ws.Range("B3").Locked', 'ws.Unprotect "pw"')
+T("TProtect", "pr_filtered", ws_("PR13"), 'ws.Range("A1:E13").AutoFilter Field:=2, Criteria1:="North"', 'ws.Protect "pw", AllowFiltering:=True',
+  "E: ws.ShowAllData", "S: Vis(ws)", "E: ws.AutoFilterMode = False", "V: ws.AutoFilterMode", 'ws.Unprotect "pw"', "ws.AutoFilterMode = False")
+
+SHEETS += [(name, [10], []) for name in ("NF", "NF2", "NF3", "NF4", "NF5", "NF6", "NFC", "NF7")]
+SHEETS += [(f"F{i}", [8, 12, 12, 12, 8], FILTER_ROWS) for i in (43, 44, 45, 46)]
+SHEETS += [(f"PR{i}", [8] * 5, PR_ROWS) for i in (1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 14)] + [(f"PR{i}", [8, 12, 12, 12, 8], FILTER_ROWS) for i in (4, 5, 13)]
+SHEETS += [(name, [8] * 5, PR_ROWS, {"protection": xml}) for name, xml in PROTECTED.items()] + [("PB", [8], [[1]])]
+SHEETS += [("RC", [8] * 5, [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10], [11, 12, 13, 14, 15], [16, 17, 18, 19, 20]]), ("RCData", [8], [[100], [200]]),
+           ("My R1C1", [8], [[1000], [2000]]), ("RCE", [8], [])]
+SHEETS += [(name, [8] * 12, []) for name in ("FL1", "FL2", "FL3", "FL4", "FL5", "PL", "PL2", "AF1", "AF2", "AF3", "AF4", "AF5")]
+SHEETS += [(f"AS{k}", [8], []) for k in range(1, len(SERIES) + 1)] + [(f"CT{i}", [8] * 8, []) for i in range(1, 13)]
+SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
+
+
 def sheets(index):
     """The workbook's sheets for the builder: Out, with each test's name in column A of its row, then the rest."""
     out = [("Out", [14] + [22] * 15, [[name] for _row, _module, name in index])]
-    return [(name, columns, rows, []) for name, columns, rows in out + SHEETS]
+    return [(name, columns, rows, [], *options) for name, columns, rows, *options in out + SHEETS]

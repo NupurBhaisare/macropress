@@ -28,7 +28,7 @@ on Windows. That is slow and fragile, hard to run on a server or in a container,
 every macro full access to the machine it runs on.
 
 MacroPress treats the VBA as source code instead. It converts it to Python and runs it against a model of the parts
-of Excel that macros use, built to give the same results as Excel and checked against Excel itself: about a thousand
+of Excel that macros use, built to give the same results as Excel and checked against Excel itself: over a thousand
 small macros were run in Excel, and every test run compares MacroPress's answers with Excel's
 ([tests/parity](tests/parity)). Where the model has a gap, the run stops with "not modelled", so you don't get a
 workbook that is quietly wrong.
@@ -43,9 +43,10 @@ and hand back the result. It works just as well in a script, a scheduled job or 
 - **Converts the VBA to readable Python**, one function per procedure, with each VBA line kept as a comment above
   its translation.
 - **Runs it against a model of the workbook**: `Range`, `Cells`, `End(xlUp)`, `CurrentRegion`, `Offset`, `Resize`,
-  `Copy` and `PasteSpecial`, `Sort`, `AutoFilter`, `ClearContents`, sheets and named ranges, formulas that recalculate
-  when their inputs change, `WorksheetFunction`, and VBA's own rules: Variant conversions, banker's rounding, error
-  numbers, `On Error`. The full list is in [docs/supported.md](docs/supported.md).
+  `Copy`, `Cut` and `PasteSpecial`, `FillDown` and `AutoFill`, `Sort`, `AutoFilter`, `ClearContents`, number formats,
+  sheet protection and hidden sheets, sheets and named ranges, formulas (A1 or R1C1 style) that recalculate when their
+  inputs change, `WorksheetFunction`, and VBA's own rules: Variant conversions, banker's rounding, error numbers,
+  `On Error`. The full list is in [docs/supported.md](docs/supported.md).
 - **Answers the questions macros ask**: answers to `MsgBox` and `InputBox` come from the command line, and `Now`,
   `Date` and `Timer` run on a clock you can fix, so a run can be repeated exactly.
 - **Saves a copy and never writes to the original**: only the sheets the macros changed are rewritten. Everything
@@ -58,8 +59,7 @@ and hand back the result. It works just as well in a script, a scheduled job or 
 
 MacroPress covers macros that move and compute data. It stops, at the line and with the reason, when a macro:
 
-- sets formatting: fonts, colours, borders, column widths, number formats (it reads number formats, and keeps the
-  ones in the workbook);
+- sets formatting other than number formats: fonts, colours, borders, column widths;
 - inserts or deletes rows, columns or sheets, or uses `Range.Find`, `SpecialCells`, charts or pivot tables;
 - opens or saves other workbooks, reads or writes files, sends mail, or calls Windows through `Declare` or
   `CreateObject`;

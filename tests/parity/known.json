@@ -35,6 +35,36 @@
     },
     "T_types2": {
      "8": "[Integer]"
+    },
+    "T_cut_refs": {
+     "8": "[Integer:0]"
+    },
+    "T_cut_paste": {
+     "1": "[Integer:2]",
+     "2": "[Integer:0]",
+     "6": "[Integer:1]"
+    },
+    "T_paste_tile2": {
+     "9": "[Integer:1]"
+    },
+    "T_pr_book": {
+     "4": "[Integer:-1]"
+    },
+    "T_pr_more_ops": {
+     "6": "[Integer:0]"
+    },
+    "T_vis_values": {
+     "1": "[Integer:0]",
+     "2": "[Integer:2]",
+     "3": "[Integer:-1]",
+     "4": "[Integer:0]",
+     "6": "[Integer:-1]",
+     "8": "[Integer:-1]",
+     "10": "[Integer:-1]",
+     "12": "[Integer:-1]"
+    },
+    "T_vis_use": {
+     "6": "[Integer:161]"
     }
    }
   },
@@ -154,16 +184,41 @@
      "4": "[m/d/yyyy h:mm]"
     }
    }
+  },
+  {
+   "why": "Activating a hidden sheet. Excel for Mac makes it the active sheet; Excel for Windows refuses with error 1004, as MacroPress does, and so a range of it cannot be selected either.",
+   "tests": {
+    "T_vis_use": {
+     "2": 1004.0,
+     "4": 1004.0,
+     "5": "[Out]"
+    }
+   }
   }
  ],
  "refused": {
   "T_addr2": "Range.Range is not modelled",
+  "T_af_filtered": "AutoFill into rows a filter hides (Excel fills nothing)",
+  "T_af_s_item": "AutoFill of a series Excel makes of text",
+  "T_af_s_month": "AutoFill of a series Excel makes of text",
+  "T_af_s_quarter": "AutoFill of a series Excel makes of text",
+  "T_af_s_weekday": "AutoFill of a series Excel makes of text",
+  "T_af_square": "AutoFill into a range that runs on from the source both down",
   "T_bigformula": "reading B6!N6: a formula whose value could not be calculated",
   "T_cdbl": "reading '$5' as a number: whether VBA takes a currency sign ",
   "T_cdblb0": "reading '($5)' as a number: whether VBA takes a currency sig",
   "T_cdblb3": "reading '$ 5' as a number: whether VBA takes a currency sign",
   "T_cf03": "writing a Currency to a cell formatted as Text",
-  "T_copy1toN": "pasting 1x1 copied cells into $AQ$1:$AQ$3, another size",
+  "T_code38": "the number format '0.00 kg': how Excel reads 'k' in it is no",
+  "T_code40": "the number format '0.0x': how Excel reads 'x' in it is not m",
+  "T_code64": "the number format 'Text': how Excel reads 'T' in it is not m",
+  "T_code65": "the number format 'abc': how Excel reads 'a' in it is not mo",
+  "T_code78": "the number format '#,##0.00 USD': how Excel reads 'U' in it ",
+  "T_code83": "the number format '0.00x': how Excel reads 'x' in it is not ",
+  "T_code84": "the number format 'Standard': how Excel reads 't' in it is n",
+  "T_cut_edge": "a cut that moves part of the range A1:A3 a formula reads",
+  "T_cut_filtered": "cutting cells of a filter's range, or onto them",
+  "T_cut_sheets_range": "a cut that moves part of the range CT11!A1:A2 a formula read",
   "T_ddiff1": "DateDiff interval 'q'",
   "T_ddiff2": "DateDiff interval 'ww'",
   "T_h031": "reading FX!AH31: a formula whose value could not be calculat",
@@ -206,6 +261,10 @@
   "T_j010": "reading FX!AV10: a formula whose value could not be calculat",
   "T_j026": "reading FX!AV26: a formula whose value could not be calculat",
   "T_m08b": "writing a Currency to a cell formatted as Text",
+  "T_nf_array": "NumberFormat set from an array",
+  "T_pr_fill": "cutting cells of a protected sheet (unverified)",
+  "T_pr_paste_unlocked": "protecting a protected sheet again with other options and an",
+  "T_rc_a1": "an A1 reference in a formula written R1C1 style (=A1+1)",
   "T_shown": "the displayed text of B5!L6: -123.4567 may not fit its colum",
   "T_strnum": "reading '$5' as a number: whether VBA takes a currency sign ",
   "T_text3": "the displayed text of FX!M2: 46083 in the number format yyyy",
@@ -230,7 +289,6 @@
   "T_txt19": "the displayed text of B4!F19: -12345678901 in the number for",
   "T_txt20": "the displayed text of B4!F20: 0.00001234 may not fit its col",
   "T_txtnarrow": "the displayed text of B4!E1: 123456 may not fit its column a",
-  "T_visible": "setting Worksheet.Visible is not modelled",
   "T_w12": "writing '1/2' to a cell: Excel turns it into a date or a tim",
   "T_w23": "writing '12-13' to a cell: Excel turns it into a date or a t",
   "T_w24": "writing 'Jan 5' to a cell: Excel turns it into a date or a t",

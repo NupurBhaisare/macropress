@@ -4,7 +4,7 @@ write leaves in a cell that already has one. Checked against Excel (tests/parity
 import re
 from decimal import ROUND_HALF_UP, Decimal
 
-from .errors import VBANotImplemented
+from .errors import VBANotImplemented, VBARuntimeError
 from .values import fifteen
 
 # The formats Excel knows by number, as VBA's NumberFormat gives them under US regional settings.
@@ -89,6 +89,14 @@ def is_date_format(code):
     return False
 
 
+def is_time_format(code):
+    """Whether a format shows a time of day and no date (h:mm, h:mm:ss AM/PM): what a fill counts on by hours."""
+    if not code or code in ("General", TEXT) or is_date_format(code):
+        return False
+    first = _LITERALS.sub("", code).split(";")[0]
+    return not re.search(r"[0#?]", first) and bool(re.search(r"[hs]", first, re.I))
+
+
 _SIGN_WRITTEN_OUT = re.compile(r'\[\$[^\]-]+(-[^\]]*)?\]|"[^"]*[$€£¥₹][^"]*"|\\[$€£¥₹]|[€£¥₹]')
 
 
@@ -143,3 +151,59 @@ def after_entry(cell, entry):
     if entry not in KIND:
         return cell  # the #,##0 of "1,234": only a General cell takes it
     return entry if cell in KIND and KIND[cell] != KIND[entry] else cell
+
+
+# --- a format code a macro gives (Range.NumberFormat = "...")
+_ENTERED_TOKEN = re.compile(r'"[^"]*"?|\[[^\]]*\]?|\\.|[_*].|(?i:am/pm)|[eE][-+]|.', re.S)
+_COLOURS = {c.lower(): c for c in ("Black", "Blue", "Cyan", "Green", "Magenta", "Red", "White", "Yellow")}
+_CONDITION = re.compile(r"\[(?:<=|>=|<>|<|>|=)-?\d+(?:\.\d+)?\]")
+_ELAPSED = re.compile(r"\[(?:h+|m+|s+)\]", re.I)
+# What stands in a code as it is: digits and their separators, the text sign, and the literals Excel keeps unquoted
+_KEPT = set("0123456789#?.,%@ $-+/():£;")
+_DATE_LETTERS = set("ymdhsYMDHS")
+
+
+def entered(code):
+    """The number format a cell has once a macro gives it `code`, as NumberFormat then reads it, or None for General.
+    Excel keeps most codes as given and writes a few its own way: General, the letters of dates in lower case, AM/PM
+    and colours ([Red]) as it spells them, "$" as a bare $. A code it cannot read is error 1004. A code with letters
+    it reads as more than that (abc becomes \abbc) is not modelled."""
+    if not code or code.lower() == "general":
+        return None
+    out, sections = [], 1
+    for token in _ENTERED_TOKEN.findall(code):
+        first = token[0]
+        if first == '"':
+            if len(token) == 1 or not token.endswith('"'):
+                raise VBARuntimeError(1004, "Unable to set the NumberFormat property of the Range class")
+            out.append("$" if token == '"$"' else token)
+        elif first == "[":
+            if not token.endswith("]"):
+                raise VBARuntimeError(1004, "Unable to set the NumberFormat property of the Range class")
+            inner = token[1:-1]
+            if inner.lower() in _COLOURS:
+                out.append(f"[{_COLOURS[inner.lower()]}]")
+            elif inner.startswith("$") or _CONDITION.fullmatch(token):
+                out.append(token)
+            elif _ELAPSED.fullmatch(token):
+                out.append(token.lower())
+            else:
+                raise VBANotImplemented(f"the number format {code!r}: how Excel reads {token} is not modelled")
+        elif first in "\\_*" and len(token) == 2:
+            out.append(token)
+        elif token.lower() == "am/pm":
+            out.append("AM/PM")
+        elif token in ("E+", "E-"):
+            out.append(token)
+        elif token in ("e+", "e-"):
+            raise VBARuntimeError(1004, "Unable to set the NumberFormat property of the Range class")
+        elif first in _DATE_LETTERS:
+            out.append(token.lower())
+        elif first in _KEPT:
+            sections += token == ";"
+            out.append(token)
+        else:
+            raise VBANotImplemented(f"the number format {code!r}: how Excel reads {token!r} in it is not modelled")
+    if sections > 4:
+        raise VBARuntimeError(1004, "Unable to set the NumberFormat property of the Range class")
+    return "".join(out)

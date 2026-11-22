@@ -6,7 +6,7 @@ Thank you for helping. The most useful contributions, roughly in order:
    report, and what Excel does instead. Use made-up data: this repository is public.
 2. **Something that isn't modelled yet**: a VBA function, an Excel member, a worksheet function, or a `Format`
    pattern that stopped your macro with `not modelled`.
-3. **Checking MacroPress against Excel.** [tests/parity](tests/parity) holds about a thousand small macros with the
+3. **Checking MacroPress against Excel.** [tests/parity](tests/parity) holds over a thousand small macros with the
    answers Excel gave. If you have Excel, add probes for something that isn't covered, record what Excel answers,
    and see whether MacroPress agrees. Excel for Windows would be especially welcome: the answers so far come from
    Excel for Mac.

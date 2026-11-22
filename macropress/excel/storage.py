@@ -7,13 +7,23 @@
 
 
 class Cell:
-    __slots__ = ("value", "formula", "numfmt")
+    """A cell the sheet holds a record of: what it holds, its number format (None for General), and whether it is
+    locked, as a protected sheet asks (cells are, unless their style says not)."""
 
-    def __init__(self, value=None, formula=None, numfmt=None):
-        self.value, self.formula, self.numfmt = value, formula, numfmt
+    __slots__ = ("value", "formula", "numfmt", "locked")
+
+    def __init__(self, value=None, formula=None, numfmt=None, locked=True):
+        self.value, self.formula, self.numfmt, self.locked = value, formula, numfmt, locked
 
     def copy(self):
-        return Cell(self.value, self.formula, self.numfmt)
+        return Cell(self.value, self.formula, self.numfmt, self.locked)
+
+    @property
+    def style(self):
+        return self.numfmt, self.locked
+
+
+NORMAL = (None, True)  # the style of a cell nothing formats: General, locked
 
 
 class Table:

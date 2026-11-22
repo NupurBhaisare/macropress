@@ -55,14 +55,39 @@ ASSUMPTIONS = {
     ),
     "FILTER-WRITES-VISIBLE": (
         "verified",
-        "Writing to or clearing a range on a filtered sheet changes only the rows the filter shows (a range it hides "
-        "whole is changed whole); an array written there starts again at each run of shown rows.",
+        "Writing to, clearing, formatting or filling a range on a filtered sheet changes only the rows the filter shows "
+        "(a range it hides whole is changed whole), and so does one cell copied over it; an array written there starts "
+        "again at each run of shown rows. A block of cells pasted there lands whole, hidden rows and all.",
     ),
     "PASTE-WHOLE-ROWS": (
         "verified",
         "Pasting whole copied rows replaces the whole target rows; blank source cells clear target cells.",
     ),
     "WRITE-EMPTY-STRING": ("verified", 'Writing "" to a cell leaves it empty.'),
+    "PROTECTED-SHEET": (
+        "verified",
+        "On a protected sheet a macro changes unlocked cells only: a value written over locked and unlocked cells reaches "
+        "the unlocked ones and is error 1004; a paste or fill into unlocked cells brings their contents, not their "
+        "formats; number formats need AllowFormattingCells, sorting AllowSorting, and the AutoFilter method always "
+        "fails. UserInterfaceOnly lets macros change anything, and holds for the session.",
+    ),
+    "CUT-MOVES-REFERENCES": (
+        "verified",
+        "Cells cut and pasted take their contents and formats with them and leave empty General cells; a formula or "
+        "name that reads them reads them where they are now, one that read the cells they landed on reads #REF!, and "
+        "one that read part of a range they belong to is left as it was.",
+    ),
+    "AUTOFILL-SERIES": (
+        "verified",
+        "AutoFill continues two numbers or more along their least-squares trend, a number alone in its line of a "
+        "larger range by 1 a step, and a date filled alone by a day.",
+    ),
+    "AUTOFILL-TEXT-COPIED": (
+        "limitation",
+        "AutoFill copies text that holds no digits and is not an English month or weekday (those are refused). Excel "
+        "also counts on the lists of months and weekdays of the machine's language and any list a user added, which "
+        "MacroPress does not know.",
+    ),
     "FORMULAS-RECALCULATED": (
         "verified",
         "Formulas whose inputs changed are recalculated before their values are read and before saving "
@@ -91,6 +116,12 @@ ASSUMPTIONS = {
         "verified",
         "Sorting a range with hidden rows (filtered or hidden by hand) leaves the hidden rows where they are and "
         "sorts only the visible rows among themselves.",
+    ),
+    "COLUMN-WIDTH-DEFAULT": (
+        "limitation",
+        "A column formatted whole that had no width of its own is saved with the sheet's default width written out, as "
+        "Excel for Windows works it out for Calibri 11 (9.140625); with another default font, or on a Mac, it may show "
+        "a little wider or narrower.",
     ),
     "FORMATS-NOT-MODELLED": (
         "limitation",

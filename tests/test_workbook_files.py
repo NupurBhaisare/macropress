@@ -297,6 +297,105 @@ STYLES = (
 )
 
 
+def test_number_formats_and_locks_a_macro_sets_are_saved_for_cells_rows_and_columns(tmp_path):
+    sheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<cols><col min="2" max="4" width="15" customWidth="1"/></cols><sheetData>'
+        '<row r="1"><c r="A1"><v>1</v></c><c r="C9" s="0"/></row><row r="9"><c r="C9"/></row></sheetData></worksheet>'
+    )
+    parts = {**PARTS, "xl/styles.xml": FORMATS, "xl/worksheets/sheet1.xml": sheet}
+    path = _workbook(tmp_path / "in.xlsx", parts)
+    vba = (
+        'Range("A1").NumberFormat = "0.00"\nColumns("C").NumberFormat = "0%"\nRows(5).NumberFormat = "#,##0"\n'
+        'Range("E2").Locked = False\nColumns("F").Locked = False\nRange("G2:G1048576").NumberFormat = "0.0"'
+    )
+    saved = _press(path, tmp_path / "out.xlsx", vba)
+    assert [saved.format_at(*rc) for rc in ((1, 1), (9, 3), (5, 9), (5, 3), (1, 7), (2, 7), (9999, 7))] == [
+        "0.00",
+        "0%",
+        "#,##0",
+        "#,##0",
+        None,
+        "0.0",
+        "0.0",
+    ]
+    assert (saved.locked_at(2, 5), saved.locked_at(3, 5), saved.locked_at(500, 6)) == (False, True, False)
+    with zipfile.ZipFile(tmp_path / "out.xlsx") as z:
+        xml = z.read("xl/worksheets/sheet1.xml").decode()
+    cols = re.findall(r"<col [^>]*/>", xml)
+    # B:D is cut so that C alone takes the format, each part keeping its width; F and G are given the default width
+    assert [re.search(r'min="(\d+)" max="(\d+)"', c).groups() for c in cols] == [
+        ("2", "2"),
+        ("3", "3"),
+        ("4", "4"),
+        ("6", "6"),
+        ("7", "7"),
+    ]
+    assert all('width="15"' in c for c in cols[:3]) and all('width="9.140625"' in c for c in cols[3:])
+    assert '<row r="5" customFormat="1" s=' in xml
+
+
+def test_protection_and_hidden_sheets_are_saved_and_a_password_kept_as_the_file_had_it(tmp_path):
+    from macropress.excel.protection import legacy_hash
+
+    sheet = PARTS["xl/worksheets/sheet1.xml"].replace(
+        "</sheetData>",
+        f'</sheetData><sheetProtection password="{legacy_hash("secret")}" sheet="1" objects="1" scenarios="1"/>',
+    )
+    path = _workbook(tmp_path / "in.xlsx", {**PARTS, "xl/worksheets/sheet1.xml": sheet})
+    ctx = runtime.Context(str(path))
+    assert _run(
+        ctx, 'On Error Resume Next\nRange("A1").Value = 5\nDebug.Print Err.Number, ActiveSheet.ProtectContents'
+    ) == ["1004 True"]
+    # unprotected with its password and protected again with it: the file's hash is kept as it was
+    _run(ctx, 'ActiveSheet.Unprotect "secret"\nRange("A1").Value = 5\nActiveSheet.Protect "secret"')
+    ctx.save(str(tmp_path / "out.xlsx"))
+    with zipfile.ZipFile(tmp_path / "out.xlsx") as z:
+        assert (
+            '<sheetProtection password="DAA7" sheet="1" objects="1" scenarios="1"/>'
+            in z.read("xl/worksheets/sheet1.xml").decode()
+        )
+    # a new password is saved as Excel saves one, a salted SHA-512, and read back
+    saved = _press(
+        path, tmp_path / "out2.xlsx", 'ActiveSheet.Unprotect "secret"\nActiveSheet.Protect "pw", AllowFiltering:=True'
+    )
+    assert saved.protection.password.matches("pw") and not saved.protection.password.matches("secret")
+    assert (
+        saved.protection.allow == {"allowfiltering"} and saved.protection.password.attrs["algorithmName"] == "SHA-512"
+    )
+    again = _press(
+        path, tmp_path / "out3.xlsx", 'ActiveSheet.Unprotect "secret"\nActiveSheet.Protect "pw", AllowFiltering:=True'
+    )
+    assert again.protection.password.attrs == saved.protection.password.attrs  # the same press saves the same copy
+    book = read_workbook(
+        str(_press(path, tmp_path / "out4.xlsx", 'ActiveSheet.Unprotect "secret"') and tmp_path / "out4.xlsx")
+    )
+    assert book.find_sheet("Data").protection is None
+
+
+def test_a_cut_takes_names_with_it_and_a_save_stops_where_other_parts_of_the_file_read_the_cells(tmp_path):
+    workbook = PARTS["xl/workbook.xml"].replace(
+        "</sheets>", '</sheets><definedNames><definedName name="Rate">Data!$A$1</definedName></definedNames>'
+    )
+    path = _workbook(tmp_path / "in.xlsx", {**PARTS, "xl/workbook.xml": workbook})
+    ctx = runtime.Context(str(path))
+    assert _run(ctx, 'Range("A1").Cut Range("D4")\nRange("E1").Formula = "=Rate*2"\nDebug.Print Range("E1").Value') == [
+        "2"
+    ]
+    ctx.save(str(tmp_path / "out.xlsx"))
+    with zipfile.ZipFile(tmp_path / "out.xlsx") as z:
+        assert '<definedName name="Rate">Data!$D$4</definedName>' in z.read("xl/workbook.xml").decode()
+    sheet = PARTS["xl/worksheets/sheet1.xml"].replace(
+        "</sheetData>",
+        '</sheetData><conditionalFormatting sqref="A1:A2"><cfRule type="expression" priority="1">'
+        "<formula>A1&gt;0</formula></cfRule></conditionalFormatting>",
+    )
+    path = _workbook(tmp_path / "in2.xlsx", {**PARTS, "xl/worksheets/sheet1.xml": sheet})
+    with pytest.raises(VBANotImplemented, match="conditionalFormatting covers"):
+        _press(path, tmp_path / "out2.xlsx", 'Range("A1").Cut Range("D4")')
+
+
 def test_saving_formats_written_dates_and_refuses_a_rename_a_chart_would_miss(tmp_path):
     sheet = PARTS["xl/worksheets/sheet1.xml"].replace('<c r="A1"><v>1</v></c>', '<c r="A1" s="1"><v>1</v></c>')
     chart = '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:f>Data!$A$1:$A$2</c:f></c:chartSpace>'  # fmt: skip

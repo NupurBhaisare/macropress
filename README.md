@@ -68,7 +68,8 @@ MacroPress covers macros that move and compute data. It stops, at the line and w
 
 Event procedures (`Worksheet_Change`, `Workbook_Open`) do not run; the report says when a workbook has them.
 [docs/supported.md](docs/supported.md) has the whole list. Many report-building macros format what they build, so
-expect some buttons to stop: the report names the line, and the copy holds what was done up to it.
+expect some buttons to stop: the report names the line, and the copy holds what was done up to it. What is planned
+next, and in what order, is in [docs/roadmap.md](docs/roadmap.md).
 
 ## Install
 

@@ -71,7 +71,7 @@ Some come with limits, and stop the run outside them:
 | Range | Activate, Address, AutoFill, AutoFilter, AutoFit (does nothing: widths are not modelled), Calculate, Cells, Clear, ClearContents, Column, Columns, Copy, Count, CurrentRegion, Cut, End, EntireColumn, EntireRow, FillDown, FillLeft, FillRight, FillUp, Formula, Formula2, Formula2R1C1, FormulaR1C1, Hidden, Item, Locked, NumberFormat, Offset, Parent, PasteSpecial, Resize, Row, Rows, Select, Sort, Text, Value, Value2, Worksheet |
 | Sort (Worksheet.Sort) | SortFields (Add, Add2, Clear, Count), SetRange, Header, MatchCase, Orientation, SortMethod, Apply |
 | Name | Name, RefersTo, RefersToRange |
-| WorksheetFunction | CountA, Find, Max, Min, Search, Sum, XLookup |
+| WorksheetFunction | AverageIf, AverageIfs, CountA, CountIf, CountIfs, Find, Max, MaxIfs, Min, MinIfs, Search, Sum, SumIf, SumIfs, XLookup |
 
 Within those, a few cases stop the run: `PasteSpecial` with `Transpose`, `SkipBlanks` or an `Operation`; `Sort` by
 colour, with a custom order or left to right; `AutoFilter` with criteria other than values, comparisons and wildcards;
@@ -163,9 +163,10 @@ formula or a `SUM` that ends on a sum which all but cancels gives 0, text in ari
 (`="5%"+1`), and `SUM`, `COUNT` and the like count text and logical values written in the formula but pass over
 those read from cells.
 
-Functions: ABS, AND, AVERAGE, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA, IF, IFERROR, INDEX, INT, ISBLANK,
-ISNUMBER, ISTEXT, LEFT, LEN, LOWER, MATCH (exact), MAX, MID, MIN, NOT, NOW, OR, RIGHT, ROUND, ROW, ROWS, SORT, SUM,
-SUMPRODUCT, TODAY, TRIM, UNIQUE, UPPER, VLOOKUP (exact), XLOOKUP (exact). Arithmetic, comparison and `&` operators,
+Functions: ABS, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA, COUNTIF,
+COUNTIFS, IF, IFERROR, INDEX, INT, ISBLANK, ISNUMBER, ISTEXT, LEFT, LEN, LOWER, MATCH (exact), MAX, MAXIFS, MID, MIN,
+MINIFS, NOT, NOW, OR, RIGHT, ROUND, ROW, ROWS, SORT, SUM, SUMIF, SUMIFS, SUMPRODUCT, TODAY, TRIM, UNIQUE, UPPER,
+VLOOKUP (exact), XLOOKUP (exact). Arithmetic, comparison and `&` operators,
 references to other sheets, defined names, whole rows and columns, array constants (`{1,2;3,4}`), and dynamic arrays
 that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
 
@@ -184,6 +185,22 @@ that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
   them all up, and `SUM` passes over text it reads that way as it does text in cells.
 - `SUMPRODUCT` counts what is not a number as 0, takes arrays of one size only (`#VALUE!` otherwise), and does not
   round to 0 a sum that all but cancels, as `SUM` does.
+- **Criteria** (`SUMIF`, `COUNTIF`, `AVERAGEIF`, their `S` forms, `MAXIFS`, `MINIFS`) find what Excel finds. A
+  number finds the numbers equal to it to 15 digits and the text that reads as one: `5` and `"5"` find `"05"`, `" 5"`
+  and `"5.0"`. Text may start with `=`, `<>`, `<`, `>`, `<=` or `>=`; what follows is a number, `TRUE`, `FALSE` or an
+  error (`"#N/A"` finds `#N/A` cells) if it reads as one, else text, matched ignoring case with the wildcards `* ? ~`.
+  `<>` finds every cell `=` would not, but text that reads as the number (`"<>5"` finds `"5"`); `<` and `>` find only
+  cells of their own kind (`">4"` passes over `"5"`). `""` finds blank cells and empty text, `"="` blank cells only,
+  `"<>"` every cell that is not blank. A blank criterion is the number 0; `TRUE` never finds 1. A criterion over 255
+  characters is `#VALUE!`. Text that Excel reads by regional settings, a date or an amount of money, in a criterion or
+  in a cell a number is looked for in, leaves the formula for Excel to calculate, as below.
+- `SUMIF` and `AVERAGEIF` read their sum range from its first cell over the criteria range's size, whatever its own
+  (`=SUMIF(A1:A5,"x",B1)` adds up B1:B5), and are recalculated when any of those cells change; the `S` forms want
+  ranges of one size (`#VALUE!` otherwise). Their sums are the plain ones, not rounded to 0 as `SUM`'s, and an error
+  in a cell found is the result. `AVERAGEIF` that finds nothing is `#DIV/0!`, `MAXIFS` and `MINIFS` 0. A range where
+  a criterion is wanted gives the formula's own row of it, as any value does; a constant, an operator or a function
+  such as `SUM` where a range is wanted is refused as Excel refuses it (error 1004 as the formula is written), as is
+  the wrong number of arguments.
 - **The text of a formula** is kept as Excel keeps what is typed: its functions' names and its references in
   capitals, a sheet's name as the sheet has it (quoted where it could be read as a cell, `'AR2'!A1`), numbers as Excel
   writes them, and no space before a comma. `Formula2` shows a formula written with `Formula` with `@` where it takes
@@ -198,7 +215,7 @@ each its own formula, and a relative reference that runs off the sheet comes rou
 `Formula` reads R1C1 text too where A1 style cannot (`=R1C1`). An A1 reference given to `FormulaR1C1`, which Excel
 turns into a name that cannot exist (`='A1'+1`), stops the run.
 
-A formula using any other function (`SUMIF`, `COUNTIF`, `INDIRECT`, ...), or text that Excel would read by regional
+A formula using any other function (`INDIRECT`, `OFFSET`, `TEXT`, ...), or text that Excel would read by regional
 settings (a date, a currency sign) does not stop the run. It is saved without a value, for Excel to calculate, and the report names it
 (`FORMULA-NOT-EVALUATED`). A macro that then reads that formula's value does stop, since its value is unknown.
 

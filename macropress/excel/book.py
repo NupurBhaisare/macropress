@@ -157,7 +157,7 @@ class Book(VBAObject):
             if (r, c) in sheet.array_cells and sheet.array_cells[(r, c)] != (r, c, r, c):
                 raise VBANotImplemented("an array formula entered over several cells")
             info.ast = fx.parse(text)
-            info.precedents = self._precedents(sheet, fx.references(info.ast))
+            info.precedents = self._precedents(sheet, fx.references(info.ast), info.ast)
             info.volatile = bool(VOLATILE & fx.function_names(info.ast))
         except VBANotImplemented as err:  # not evaluated: it keeps its saved value until a cell it reads changes
             info.error, info.precedents = str(err), self._named_precedents(sheet, text)
@@ -169,16 +169,21 @@ class Book(VBAObject):
             self._watch(key)
         return info
 
-    def _precedents(self, sheet, nodes):
-        """The rectangles a formula reads, from its ref and name nodes; one that is #REF! or #NAME? reads nothing."""
-        ev = fx.Evaluator(self, sheet, self._read_for_formula)
+    def _precedents(self, sheet, nodes, tree=None):
+        """The rectangles a formula reads, from its ref and name nodes; one that is #REF! or #NAME? reads nothing.
+        With the formula's tree, also what SUMIF reads past its sum range; None where that is known only as it is
+        worked out."""
+        ev = self._evaluator(sheet)
         rects = []
         for node in nodes:
             try:
                 rects.append(ev.rect_of(node))
             except fx._Err:
                 pass  # a #REF! or #NAME? reference reads no cells
-        return rects
+        if tree is None:
+            return rects
+        resized = fx.resized_reads(tree, ev.rect_of)
+        return None if resized is None else rects + resized
 
     def _named_precedents(self, sheet, text):
         """For a formula the evaluator cannot read: the rectangles its text names, or None when it can read cells it
@@ -371,7 +376,7 @@ class Book(VBAObject):
                 try:
                     sheet, r, c = key
                     arrays = info.dynamic or (r, c) in sheet.array_cells  # Formula2, or Ctrl+Shift+Enter
-                    result = fx.Evaluator(self, sheet, self._read_for_formula, (r, c), arrays).run(info.ast)
+                    result = self._evaluator(sheet, (r, c), arrays).run(info.ast)
                 except VBANotImplemented as err:
                     result = PENDING
                     if self.app is not None:
@@ -382,6 +387,35 @@ class Book(VBAObject):
         self._store(key, info, result)
         if key in self.formula_index and key not in self.dirty:
             self._watch(key)
+
+    def formula_cells(self, sheet, r1, c1, r2, c2):
+        """The cells of a rectangle as a formula reads them (fx.Array), current: for a worksheet function VBA calls."""
+        return self._evaluator(sheet).range_values((sheet, r1, c1, r2, c2))
+
+    def _evaluator(self, sheet, cell=None, arrays=False):
+        return fx.Evaluator(self, sheet, self._read_for_formula, cell, arrays, self._rows_for_formula)
+
+    def _rows_for_formula(self, sheet, r1, c1, r2, c2):
+        """A block of cells as _read_for_formula reads them one by one, read at once where none of the sheet's
+        formulas waits to be calculated and none of the block is being calculated; None where one may."""
+        if self._dirty_on.get(sheet) or any(
+            k[0] is sheet and r1 <= k[1] <= r2 and c1 <= k[2] <= c2 for k in self._evaluating
+        ):
+            return None
+        out, columns = [], range(c1, c2 + 1)
+        for r in range(r1, r2 + 1):
+            row = sheet.rows.get(r)
+            if not row:
+                out.append([None] * len(columns))
+                continue
+            values = []
+            for c in columns:
+                cell = row.get(c)
+                if cell is not None and cell.value is PENDING:
+                    return None  # read one by one, which stops where it is read
+                values.append(None if cell is None else cell.value)
+            out.append(values)
+        return out
 
     def _read_for_formula(self, sheet, r, c):
         if (sheet, r, c) in self._evaluating:

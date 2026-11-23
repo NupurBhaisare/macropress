@@ -14,7 +14,9 @@ from ..values import (
     is_numeric_value,
     to_long,
     to_str,
+    type_mismatch,
 )
+from .constants import MAX_COL, MAX_ROW
 from .filters import wildcard_regex
 from .range import Range
 
@@ -122,6 +124,76 @@ class WorksheetFunction(VBAObject):
 
     def m_counta(self, *args):
         return float(sum(1 for a in args for v in self._cells(a) if v is not EMPTY))
+
+    # --- CountIf, SumIf and the rest: formula.criterion has the rules ---
+    def _area(self, arg, extent=None):
+        """A range argument: its cells as a formula reads them. Only a Range will do (error 424, as for an array).
+        With extent, SumIf's sum range: its first cell and on, over the criteria range's size."""
+        if not isinstance(arg, Range):
+            raise VBARuntimeError(424, "Object required")
+        r2, c2 = (arg.r2, arg.c2) if extent is None else (arg.r1 + extent[0] - 1, arg.c1 + extent[1] - 1)
+        if r2 > MAX_ROW or c2 > MAX_COL:
+            raise VBANotImplemented("a sum range that runs past the edge of the sheet")
+        return arg.sheet.book.formula_cells(arg.sheet, arg.r1, arg.c1, r2, c2)
+
+    def _criterion(self, value):
+        """A criterion from VBA, as a formula is given one: a date is its serial number and Empty a blank (the number
+        0); a Range of one cell gives its value, of more is a type mismatch."""
+        if isinstance(value, Range) and value.get_count() != 1:
+            raise type_mismatch()
+        v = default_value(value)
+        if v is EMPTY:
+            return None
+        if isinstance(v, dt.datetime):
+            return date_to_serial(v)
+        if isinstance(v, (bool, str)):  # an error (CVErr) is an XLError, a str
+            return v
+        if is_numeric_value(v):
+            return float(v)
+        raise VBANotImplemented(f"a criterion of type {type(v).__name__}")
+
+    def _pairs(self, args):
+        if len(args) % 2:
+            raise VBANotImplemented("a criteria range without its criterion")
+        return [self._area(a) for a in args[0::2]], [self._criterion(c) for c in args[1::2]]
+
+    def _one_criterion(self, range_, criteria, sum_range):
+        area = self._area(range_)
+        target = area if sum_range is None else self._area(sum_range, area.extent)
+        return fx.where([area], [self._criterion(criteria)], target)[1]
+
+    def _found(self, name, work):
+        """What work() gives; an error value it comes to is run-time error 1004."""
+        try:
+            return work()
+        except fx._Err:
+            raise self._fail(name) from None
+
+    def m_countif(self, range_, criteria):
+        return self._found("CountIf", lambda: float(fx.where([self._area(range_)], [self._criterion(criteria)])[0]))
+
+    def m_countifs(self, *args):
+        return self._found("CountIfs", lambda: float(fx.where(*self._pairs(args))[0]))
+
+    def m_sumif(self, range_, criteria, sum_range=None):
+        return self._found("SumIf", lambda: fx.sum_found(self._one_criterion(range_, criteria, sum_range)))
+
+    def m_averageif(self, range_, criteria, average_range=None):
+        return self._found("AverageIf", lambda: fx.average_found(self._one_criterion(range_, criteria, average_range)))
+
+    def m_sumifs(self, sum_range, *args):
+        return self._found("SumIfs", lambda: fx.sum_found(fx.where(*self._pairs(args), self._area(sum_range))[1]))
+
+    def m_averageifs(self, average_range, *args):
+        return self._found(
+            "AverageIfs", lambda: fx.average_found(fx.where(*self._pairs(args), self._area(average_range))[1])
+        )
+
+    def m_maxifs(self, max_range, *args):
+        return self._found("MaxIfs", lambda: fx.max_found(fx.where(*self._pairs(args), self._area(max_range))[1]))
+
+    def m_minifs(self, min_range, *args):
+        return self._found("MinIfs", lambda: fx.min_found(fx.where(*self._pairs(args), self._area(min_range))[1]))
 
 
 def _xl_equal(a, b):

@@ -1488,8 +1488,8 @@ def FA(sheet, cell, formula, dynamic=False):
     return [f'{W(sheet)}.Range("{cell}").{prop} = {q(formula)}', f'V: {W(sheet)}.Range("{cell}").Value']
 
 
-def TA(name, sheet, column, rows_formulas, dynamic=False):
-    T("TArray", name, *[x for row, f in rows_formulas for x in FA(sheet, f"{column}{row}", f, dynamic)])
+def TA(name, sheet, column, rows_formulas, dynamic=False, module="TArray"):
+    T(module, name, *[x for row, f in rows_formulas for x in FA(sheet, f"{column}{row}", f, dynamic)])
 
 
 TA("ar_const", "AR", "H", [(1, "={1,2;3,4}"), (2, "=SUM({1,2;3,4})"), (3, "=SUM({1,2,3}*2)"), (4, "=SUM({1,2,3}+{10;20})"),
@@ -1557,6 +1557,120 @@ for name, col, row, formula, reads in DY:
 T("TArray", "ar_legacy_more", *FA("AR", "T1", "=SUM(F1:F3)"), *FA("AR", "T2", "=SUMPRODUCT((B1:B5=\"x\")*(A1:A5>2))"),
   *FA("AR", "T3", "=SUM((A1:A5>2)*1)"), *FA("AR", "T4", "=SUM(--(A1:A5>2))"), *FA("AR", "T5", "=MAX(E1:E3*10)"), *FA("AR", "T6", "=INDEX(C1:C5,A1:A5)"))
 SHEETS += [("AR", [8] * 30, AR_ROWS), ("AR2", [8] * 50, AR_ROWS)]
+
+# ------------------------------------------------------------------- group 2.2: conditional sums and counts
+# CI's column A holds values of every kind a criterion meets, and B the powers of 2: a SUMIF of B says which rows of A
+# matched. C alternates x and y, D mixes numbers with text and TRUE, E and F hold a sum that all but cancels, G three
+# criteria. A test writes its formulas to a column of its own (H on); no test writes to A to G.
+CI_A = [5, "5", "05", "5.0", " 5", (10, "n2"), "apple", "Apple pie", True, None, "a*b", "x?", "1234567890123456",
+        "1234567890123457", 2.5, -3, (d("2024-01-05"), "d14"), "TRUE", "1,000", 0, " apple", "APPLE", "5 ", 1234567890123456]
+CI_D = [1, "2", True, 4, None, 8, "abc", 16, 32, 64]
+CI_ROWS = [[a, 2**k, "xy"[k % 2], CI_D[k] if k < len(CI_D) else None, *([(0.1, "k"), (0.2, "k"), (-0.3, "k")][k] if k < 3 else (None, None)),
+            [5, "apple", ">4"][k] if k < 3 else None] for k, a in enumerate(CI_A)]
+CI = W("CI")
+
+
+def CS(column, criteria, sum_range="B1:B24"):
+    """SUMIF over A1:A24 of each criterion, row by row of a column: which rows of A each matched."""
+    return list(enumerate([f"=SUMIF(A1:A24,{c},{sum_range})" for c in criteria], 1))
+
+
+TA("ci_num", "CI", "H", CS("H", ["5", '"5"', '"=5"', '"05"', '"5.0"', '" 5"', '">4"', '"<5"', '"<>5"', '"> 4"', "0", '"1000"',
+                                 '"1234567890123457"', '"10.00"', '">=10"']), module="TCond")
+TA("ci_text", "CI", "I", CS("I", ['"apple"', '"apple*"', '"*apple"', '"a*b"', '"a~*b"', '"x~?"', '"?"', '"*"', '"<>apple"', '"<>a*"',
+                                  '">a"', '"<b"', '"5*"', '"=apple"', '">=Apple pie"']), module="TCond")
+TA("ci_blank", "CI", "J", CS("J", ['""', '"="', '"<>"', "A10", '">"', '"<"', "TRUE", '"TRUE"', '"<>TRUE"', '"true"', "A2", "A17",
+                                   '">45000"', "FALSE", '"<=0"']), module="TCond")
+TA("ci_crit", "CI", "R", CS("R", ['"=5.0"', '"500%"', '"(3)"', '"1e1"', '"=1,000"', '" >4"', '">=5 "', '"==5"', '"=<5"', '"2.50"',
+                                  '"= apple"', '"<>5*"', '">"&"4"']) + [(14, f'=COUNTIF(A1:A24,"{"a" * 255}")'),
+                                                                        (15, f'=COUNTIF(A1:A24,"{"a" * 256}")')], module="TCond")
+TA("ci_count", "CI", "K", list(enumerate(['=COUNTIF(A1:A24,"*")', '=COUNTIF(A1:A24,"<>")', '=COUNTIF(A1:A24,"")', '=COUNTIF(A:A,"")',
+                                          '=COUNTIF(A:A,"<>")', "=COUNTIF(A:A,5)", '=COUNTIFS(A1:A24,">0",C1:C24,"x")',
+                                          '=COUNTIFS(A1:A24,"<>",C1:C24,"y",B1:B24,">100")', '=COUNTIF(A1:A24,"<>*")',
+                                          '=COUNTIF(B:B,">1000")', '=COUNTIFS(A1:A24,">0",C1:C23,"x")', '=COUNTIF(A1:B24,">100")',
+                                          '=COUNTIF(C:C,"x")', '=COUNTIFS(C:C,"x",A:A,"<>")', '=COUNTIF(A1:A24,"<>"&"5")'], 1)), module="TCond")
+TA("ci_sum", "CI", "L", list(enumerate(["=SUMIF(A1:A24,5)", '=SUMIF(A1:A5,"<>",B1)', '=SUMIF(A1:A5,"<>",B3:B4)', '=SUMIF(A1:A5,"<>",B2:C9)',
+                                        '=SUMIF(A1:B2,"<>",B1)', '=SUMIF(C1:C24,"x",D1:D24)', '=SUMIFS(B1:B24,A1:A24,">0",C1:C24,"x")',
+                                        '=SUMIFS(B1:B24,A1:A23,">0")', '=SUMIFS(B1:B24,A1:A24,"<>")', '=SUMIF(F1:F3,"k",E1:E3)',
+                                        '=SUMIFS(E1:E3,F1:F3,"k")', '=SUMIF(A:A,">0",B:B)', '=SUMIFS(B:B,C:C,"y",A:A,"")',
+                                        '=SUMIF(AR!B1:B5,"x",AR!C1:C5)', '=SUMIF(A1:A5,"<>",B23)'], 1)), module="TCond")
+TA("ci_avg", "CI", "M", list(enumerate(['=AVERAGEIF(A1:A24,">0")', '=AVERAGEIF(A1:A24,"nothing")', '=AVERAGEIF(C1:C24,"x",B1:B24)',
+                                        '=AVERAGEIF(C1:C24,"x",D1:D24)', '=AVERAGEIFS(B1:B24,A1:A24,"<>",C1:C24,"y")',
+                                        '=AVERAGEIF(A1:A5,"<>",B1)', '=AVERAGEIF(F1:F3,"k",E1:E3)', '=MAXIFS(B1:B24,A1:A24,"*")',
+                                        '=MINIFS(B1:B24,A1:A24,"*")', '=MAXIFS(B1:B24,A1:A24,"nothing")', '=MINIFS(D1:D24,C1:C24,"x")',
+                                        '=MAXIFS(B1:B24,A1:A23,"*")', '=MAXIFS(A1:A24,C1:C24,"x")', '=AVERAGEIFS(B1:B24,A1:A24,"nothing")',
+                                        '=AVERAGEIF(C1:C24,"y",A1:A24)'], 1)), module="TCond")
+# errors, "" and a number off by its last bit, in a test's own columns: O to look in, P the powers of 2, Q to add up
+T("TCond", "ci_err", f'{CI}.Range("O1").Value = 1', f'{CI}.Range("O2").Formula = {q("=" + chr(34) * 2)}', f'{CI}.Range("O4").Value = "x"',
+  f"{CI}.Range(\"O5\").Value = CVErr(xlErrNA)", f'{CI}.Range("O6").Formula = "=1/0"', f'{CI}.Range("O7").Value = 0.1 + 0.2',
+  f'{CI}.Range("O8").Value = "\'#N/A"', "For k = 1 To 8", f"    {CI}.Cells(k, 16).Value = 2 ^ (k - 1)", "Next k",
+  f'{CI}.Range("Q1").Value = CVErr(xlErrDiv0)', f'{CI}.Range("Q2").Value = "7"', f'{CI}.Range("Q4").Value = 5', f'{CI}.Range("Q7").Value = 3',
+  *[x for row, f in enumerate(['=SUMIF(O1:O8,"",P1:P8)', '=SUMIF(O1:O8,"=",P1:P8)', '=SUMIF(O1:O8,"<>",P1:P8)', '=SUMIF(O1:O8,"*",P1:P8)',
+                               '=SUMIF(O1:O8,"#N/A",P1:P8)', '=SUMIF(O1:O8,"#DIV/0!",P1:P8)', '=SUMIF(O1:O8,"<>x",P1:P8)',
+                               "=SUMIF(O1:O8,0.3,P1:P8)", '=SUMIF(O1:O8,"<>1",P1:P8)', "=SUMIF(O1:O8,O5,P1:P8)", '=SUMIF(O1:O8,"x",Q1:Q8)',
+                               '=SUMIF(O1:O8,"<>x",Q1:Q8)', '=AVERAGEIF(O1:O8,"x",Q1:Q8)', "=SUMIF(O1:O8,1/0,P1:P8)",
+                               '=MAXIFS(Q1:Q8,O1:O8,"<>x")'], 1) for x in FA("CI", f"N{row}", f)])
+# a criterion given as a range takes the formula's own row of it; an array is gone through value by value
+TA("ci_arr", "CI", "S", [(2, "=SUMIF(A1:A24,G1:G3,B1:B24)"), (4, "=SUMIF(A1:A24,G1:G3,B1:B24)"), (5, '=SUM(COUNTIF(A1:A24,{5,"apple"}))'),
+                         (6, "=SUMPRODUCT(COUNTIF(A1:A24,G1:G3))"), (1, "=SUM(COUNTIF(A1:A24,G1:G3))"), (7, "=COUNTIF(INDEX(A1:C24,0,1),5)"),
+                         (8, '=SUMIF(A1:A24,"apple",INDEX(B1:B24,1))'), (9, "=COUNTIF(IF(TRUE,A1:A24),5)"), (10, '=SUMIF(A1:A24,"apple",B:B)'),
+                         (11, '=COUNTIFS(A1:A24,5,A1:A24,"5")'), (12, '=SUMIF(A1:A24,{5,"apple"},B1:B24)'), (13, "=COUNTIF(A1:A24,G1:G3)")], module="TCond")
+T("TCond", "ci_view", *[x for k, f in enumerate(["=SUMIF(A1:A24,G1:G3,B1:B24)", "=COUNTIF(A1:A24,G1:G3)", '=SUMIFS(B1:B24,A1:A24,G1:G3,C1:C24,"x")',
+                                                  "=COUNTIF(A1:A24,G1)", "=SUM(COUNTIF(A1:A24,G1:G3))", "=SUMPRODUCT(COUNTIF(A1:A24,G1:G3))",
+                                                  "=COUNTIF(A:A,G:G)", "=AVERAGEIF(A1:A24,G1:G3)", "=MAXIFS(B1:B24,A1:A24,G1:G3)",
+                                                  '=sumif(a1:a24,"x",b1:b24)', '=COUNTIFS(A1:A24,">0",C1:C24,G1:G3)', "=MINIFS(B1:B24,A1:A24,G1:G3)"], 1)
+                        for x in (f'{CI}.Range("T{k}").Formula = {q(f)}', f'S: {CI}.Range("T{k}").Formula2')])
+# what a SUMIF reads past the sum range written in it, kept current as cells change
+T("TCond", "ci_stale", f'{CI}.Range("U1").Formula = "=SUMIF(A1:A5,""<>"",V1)"', f'V: {CI}.Range("U1").Value', f'{CI}.Range("V3").Value = 7',
+  f'V: {CI}.Range("U1").Value', f'{CI}.Range("V5").Value = 1', f'V: {CI}.Range("U1").Value', f'{CI}.Range("V6").Value = 100',
+  f'V: {CI}.Range("U1").Value', f'{CI}.Range("U2").Formula = "=COUNTIF(V:V,"">0"")"', f'V: {CI}.Range("U2").Value', f'{CI}.Range("V9").Value = 2',
+  f'V: {CI}.Range("U2").Value', f'{CI}.Range("U3").Formula = "=AVERAGEIF(A1:A5,""<>"",V1)"', f'V: {CI}.Range("U3").Value',
+  f'{CI}.Range("V1").Value = 4', f'V: {CI}.Range("U3").Value', f'{CI}.Range("U4").Formula = "=SUMIFS(V1:V9,V1:V9,"">1"")"',
+  f'V: {CI}.Range("U4").Value', f'{CI}.Range("V2").Value = 9', f'V: {CI}.Range("U4").Value', f'V: {CI}.Range("U1").Value')
+T("TCond", "ci_dyn", *[x for cell, f, reads in [("W1", "=COUNTIF(A1:A24,G1:G3)", ["W1", "W3"]), ("X1", '=SUMIFS(B1:B24,C1:C24,{"x","y"})', ["X1", "Y1"]),
+                                                ("Z1", "=SUMIF(A1:A24,G1:G3,B1:B24)", ["Z1", "Z3"]), ("AA1", "=SUM(COUNTIF(A1:A24,G1:G3))", ["AA1"]),
+                                                ("AB1", "=MAXIFS(B1:B24,A1:A24,G1:G3)", ["AB1", "AB3"]),
+                                                ("AC1", '=COUNTIF(A1:A24,{5;"apple"})', ["AC1", "AC2"])]
+                       for x in [f'{CI}.Range("{cell}").Formula2 = {q(f)}', *[f'V: {CI}.Range("{r}").Value' for r in reads]]])
+# a range argument that is not a reference, and arguments left out
+T("TCond", "ci_entry", *[x for k, f in enumerate(['=SUMIF({1,2,3},">1")', '=COUNTIF(A1:A5*1,">1")', '=COUNTIF(IF(TRUE,{1,2,3}),">1")',
+                                                   '=SUMIF(A1:A24,"x",{1,2,3})', "=SUMIFS(B1:B24,A1:A24)", '=COUNTIFS(A1:A24,">0",C1:C24)',
+                                                   "=COUNTIF(A1:A24)"], 1)
+                         for x in (f'E: {CI}.Range("AD{k}").Formula = {q(f)}', f'V: {CI}.Range("AD{k}").Value')])
+WF = "WorksheetFunction"
+CR = {k: f'{CI}.Range("{k}")' for k in ["A1:A24", "B1:B24", "C1:C24", "D1:D24", "A1:A23", "C1:C23", "A1:A5", "B1", "A2", "A:A", "G1:G3", "E1:E3", "F1:F3"]}
+T("TCond", "ci_vba1", f'V: {WF}.CountIf({CR["A1:A24"]}, 5)', f'V: {WF}.CountIf({CR["A1:A24"]}, "5")',
+  f'V: {WF}.SumIf({CR["A1:A24"]}, ">4", {CR["B1:B24"]})', f'V: {WF}.SumIfs({CR["B1:B24"]}, {CR["A1:A24"]}, ">0", {CR["C1:C24"]}, "x")',
+  f'V: {WF}.CountIfs({CR["A1:A24"]}, "<>", {CR["C1:C24"]}, "y")', f'V: {WF}.AverageIf({CR["C1:C24"]}, "x", {CR["B1:B24"]})',
+  f'E: x = {WF}.AverageIf({CR["A1:A24"]}, "nothing")', f'V: {WF}.MaxIfs({CR["B1:B24"]}, {CR["A1:A24"]}, "*")',
+  f'V: {WF}.MinIfs({CR["B1:B24"]}, {CR["A1:A24"]}, "*")', f'V: {WF}.SumIf({CR["A1:A24"]}, DateSerial(2024, 1, 5), {CR["B1:B24"]})',
+  f'V: {WF}.SumIf({CR["A1:A24"]}, True, {CR["B1:B24"]})', f"E: x = {WF}.CountIf(Array(1, 2, 3), 2)",
+  f'V: {WF}.SumIf({CR["A1:A5"]}, "<>", {CR["B1"]})', f'E: x = {WF}.SumIfs({CR["B1:B24"]}, {CR["A1:A23"]}, ">0")',
+  f'V: {WF}.SumIf({CR["A1:A24"]}, {CR["A2"]}, {CR["B1:B24"]})')
+T("TCond", "ci_vba2", f'V: {WF}.CountIf({CR["A:A"]}, "")', f'V: {WF}.SumIf({CR["A1:A24"]}, Empty, {CR["B1:B24"]})',
+  f'V: {WF}.SumIf({CR["A1:A24"]}, "apple*", {CR["B1:B24"]})', f'V: {WF}.AverageIfs({CR["B1:B24"]}, {CR["A1:A24"]}, "<>", {CR["C1:C24"]}, "y")',
+  f'V: {WF}.SumIf({CR["A1:A24"]}, "", {CR["B1:B24"]})', f'V: {WF}.SumIf({CR["C1:C24"]}, "x", {CR["D1:D24"]})',
+  f'V: {WF}.CountIf({CR["A1:A24"]}, {CR["G1:G3"]})', f'V: {WF}.CountIf({CR["A1:A24"]}, "<>" & 5)', f'V: {WF}.SumIf({CR["F1:F3"]}, "k", {CR["E1:E3"]})',
+  f'E: x = {WF}.CountIfs({CR["A1:A24"]}, ">0", {CR["C1:C23"]}, "x")', f'V: Application.{WF}.CountIf({CR["A1:A24"]}, "apple")',
+  f'V: {WF}.SumIf({CR["A1:A24"]}, 1234567890123457#, {CR["B1:B24"]})', f'V: {WF}.SumIf({CR["A1:A24"]}, CVErr(xlErrNA), {CR["B1:B24"]})',
+  f'V: {WF}.SumIf({CR["A1:A24"]}, "<>", {CR["B1:B24"]})', f'V: {WF}.MaxIfs({CR["B1:B24"]}, {CR["A1:A24"]}, "nothing")')
+TA("ci_more", "CI", "AE", CS("AE", ['">="', '"<="', '">a*z"', "1", '">FALSE"', '"<TRUE"', '"<>#N/A"', '"=TRUE"', '">=TRUE"', '"=*"', '"~5"',
+                                    '"*5*"', '"<>*5*"', '"FALSE"']) + [(15, f'=COUNTIF(A1:A24,"={"a" * 255}")')], module="TCond")
+# booleans and errors, in a test's own columns: AG to look in, AH the powers of 2
+T("TCond", "ci_more2", f'{CI}.Range("AG1").Value = "abc"', f'{CI}.Range("AG2").Value = True', f'{CI}.Range("AG3").Value = 1',
+  f'{CI}.Range("AG4").Value = "\'TRUE"', f'{CI}.Range("AG5").Value = False', f'{CI}.Range("AG6").Value = "\'#N/A"',
+  f'{CI}.Range("AG7").Value = CVErr(xlErrNA)', f'{CI}.Range("AG8").Value = "\'-5"', f'{CI}.Range("AG9").Value = 5', "For k = 1 To 9",
+  f"    {CI}.Cells(k, 34).Value = 2 ^ (k - 1)", "Next k",
+  *[x for row, f in enumerate(["TRUE", "1", '">FALSE"', '"<>#N/A"', "5", '"<=TRUE"', '"<>TRUE"', "FALSE", '"<2"', '"=#N/A"', '"<>1"',
+                               '"0"', '">#N/A"'], 1) for x in FA("CI", f"AF{row}", f"=SUMIF(AG1:AG9,{f},AH1:AH9)")])
+# text that reads as a date or an amount of money, which regional settings read: in a cell looked in, in a criterion
+T("TCond", "ci_regional", f'{CI}.Range("AJ1").Value = "\'1/2"', f'{CI}.Range("AJ2").Value = "\'$5"', f'{CI}.Range("AJ3").Value = 5',
+  *FA("CI", "AK1", "=COUNTIF(AJ1:AJ3,5)"), *FA("CI", "AK2", '=COUNTIF(A1:A24,">1/5/2024")'))
+# the range arguments Excel refuses as a formula is entered, and arguments left empty
+T("TCond", "ci_entry2", *[x for k, f in enumerate(['=COUNTIF(5,">1")', '=COUNTIF("a","a")', '=COUNTIF(SUM(A1:A3),">1")', '=COUNTIF(-A1:A5,">1")',
+                                                    "=COUNTIF(,5)", '=SUMIF(A1:A5,">1",)', "=COUNTIF(A1:A5,)"], 1)
+                          for x in (f'E: {CI}.Range("AI{k}").Formula = {q(f)}', f'V: {CI}.Range("AI{k}").Value')])
+SHEETS += [("CI", [8] * 30, CI_ROWS)]
 SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
 def sheets(index):

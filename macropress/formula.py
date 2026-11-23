@@ -7,6 +7,7 @@ given a guessed value.
 """
 
 import datetime as dt
+import functools
 import math
 import re
 import unicodedata
@@ -929,12 +930,14 @@ class Evaluator:
     `arrays` is True for a dynamic-array formula (Formula2) or one entered with Ctrl+Shift+Enter: its ranges are
     taken whole everywhere, as arrays."""
 
-    def __init__(self, book, sheet, read, cell=None, arrays=False):
+    def __init__(self, book, sheet, read, cell=None, arrays=False, read_rows=None):
         self.book = book
         self.sheet = sheet
         self.read = read  # read(sheet, r, c) -> value (refreshing a stale formula first)
+        self.read_rows = read_rows  # read_rows(sheet, r1, c1, r2, c2) -> a block's rows at once; None: one by one
         self.cell = cell
         self.arrays = arrays
+        self.areas = {}  # the range arguments of SUMIF and the like, read once: id(node) -> Array
 
     def run(self, node):
         try:
@@ -986,7 +989,10 @@ class Evaluator:
             return Array([[None]], extent, rect)
         r2 = min(r2, max(b[2], r1))
         c2 = min(c2, max(b[3], c1))
-        return Array([[self.read(sheet, r, c) for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)], extent, rect)
+        rows = self.read_rows(sheet, r1, c1, r2, c2) if self.read_rows else None
+        if rows is None:
+            rows = [[self.read(sheet, r, c) for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)]
+        return Array(rows, extent, rect)
 
     def ev(self, node):
         kind = node[0]
@@ -1135,6 +1141,14 @@ TAKES = {
     "VLOOKUP": "vrv",
     "XLOOKUP": "vrrv",
     "INDEX": "rv",
+    "COUNTIF": "rv",
+    "SUMIF": "rvr",
+    "AVERAGEIF": "rvr",
+    "COUNTIFS": "rv" * 127,
+    "SUMIFS": "r" + "rv" * 127,
+    "AVERAGEIFS": "r" + "rv" * 127,
+    "MAXIFS": "r" + "rv" * 127,
+    "MINIFS": "r" + "rv" * 127,
 }
 
 
@@ -1562,6 +1576,333 @@ def f_sumproduct(ev, args):
     return finite(total)
 
 
+# ---------------------------------------------------------------------------
+# SUMIF, COUNTIF and the rest: the cells where criteria hold
+# ---------------------------------------------------------------------------
+
+_ERROR_TEXTS = ("#N/A", "#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#NULL!", "#SPILL!", "#CALC!")
+_CRITERION_OPS = ("<>", "<=", ">=", "<", ">", "=")
+
+
+@functools.lru_cache(maxsize=4096)
+def _reads_as(text):
+    """The number text reads as, for a criterion and for a cell it looks for a number in."""
+    return entry.value_of(text)  # a date, a time or an amount of money is refused: regional settings read those
+
+
+def _kind(v):
+    """A cell's value as a criterion sees it: ("blank" | "num" | "text" | "bool" | "err", value)."""
+    if v is None:
+        return "blank", None
+    if isinstance(v, XLError):
+        return "err", v
+    if isinstance(v, bool):
+        return "bool", v
+    if isinstance(v, (int, float)):
+        return "num", float(v)
+    if isinstance(v, dt.datetime):
+        return "num", date_to_serial(v)
+    return "text", v
+
+
+def _operand(text):
+    """What follows a criterion's operator: a number, TRUE or FALSE, an error, or text."""
+    number = _reads_as(text)
+    if number is not None:
+        return number
+    if text.upper() in ("TRUE", "FALSE"):
+        return text.upper() == "TRUE"
+    if text in _ERROR_TEXTS:
+        return XLError(text)
+    if text.strip(" ").upper() in ("TRUE", "FALSE", *_ERROR_TEXTS):
+        raise VBANotImplemented(f"the criterion {text!r}: whether Excel reads it as TRUE, FALSE or an error")
+    return text
+
+
+def _same_number(x, want, want15):
+    """x and want equal as Excel compares numbers, to 15 significant digits (want15 is fifteen(want)). Numbers that
+    far apart cannot round alike, and are not rounded."""
+    return x == want or (abs(x - want) <= 1e-13 * max(abs(x), abs(want)) and fifteen(x) == want15)
+
+
+def criterion(v):
+    """What SUMIF, COUNTIF and the rest look for, as a test of a cell's value. As Excel was found to look:
+
+    - A number finds the numbers equal to it (to 15 digits) and the text that reads as one: 5 finds "05", " 5" and
+      "5.0". TRUE and FALSE find themselves, not 1 and 0; an error finds the cells holding it. A blank criterion, or
+      one left empty, is the number 0.
+    - Text may start with =, <>, <, >, <= or >=. What follows is a number, TRUE or FALSE, or an error if it reads as
+      one, and text if not: = and <> match text ignoring case, with the wildcards * ? and ~ ("a~*" is a*).
+    - <> finds every cell = would not find, but text that reads as the number: "<>5" finds "5". <, >, <= and >= find
+      only cells of the criterion's own kind (">4" passes over "5"), comparing text as Excel orders it.
+    - "" finds blank cells and empty text, "=" blank cells only, "<>" every cell that is not blank; any other
+      operator alone finds nothing.
+    - Text longer than 255 characters is #VALUE!."""
+    op = "="
+    if isinstance(v, str) and not isinstance(v, XLError):
+        if len(v) > 255:
+            raise _Err(XLError("#VALUE!"))
+        op = next((o for o in _CRITERION_OPS if v.startswith(o)), "")
+        rest = v[len(op) :]
+        if rest == "":
+            if op == "":
+                return lambda c: c is None or type(c) is str and c == ""
+            if op in ("=", "<>"):
+                return (lambda c: c is None) if op == "=" else (lambda c: c is not None)
+            return lambda c: False
+        v, op = _operand(rest), op or "="
+    kind, want = _kind(0.0 if v is None else v)
+    if kind == "err" and op not in ("=", "<>"):
+        raise VBANotImplemented(f"a criterion that compares with {want} by {op}")
+    if kind == "num":
+        want15 = fifteen(want)
+
+        def same(c):
+            t = type(c)
+            if t is float or t is int:
+                return _same_number(c, want, want15)
+            return t is dt.datetime and _same_number(date_to_serial(c), want, want15)
+
+    elif kind == "text":
+        from .excel.filters import wildcard_regex  # noqa: PLC0415 - the excel package imports this module
+
+        pattern = wildcard_regex(want)
+        plain = want.lower() if want.isascii() and not any(ch in want for ch in "*?~") else None
+
+        def same(c):  # text only: an error, an XLError, is a str too
+            if type(c) is not str:
+                return False
+            if plain is not None and c.isascii():
+                return c.lower() == plain
+            return pattern.fullmatch(c) is not None
+
+    else:
+
+        def same(c):  # TRUE or FALSE, or an error
+            return type(c) is type(want) and c == want
+
+    if op == "<>":
+        return lambda c: not same(c)
+    if op == "=":
+        if kind != "num":
+            return same
+
+        def equal(c):
+            if type(c) is str:
+                x = _reads_as(c)
+                return x is not None and _same_number(x, want, want15)
+            return same(c)
+
+        return equal
+
+    def ordered(c):
+        k, x = _kind(c)
+        if k != kind:
+            return False
+        if kind == "text" and x == "":
+            raise VBANotImplemented(f"whether {op}{want} finds empty text")
+        r = compare(x, want)
+        return {"<": r < 0, ">": r > 0, "<=": r <= 0, ">=": r >= 0}[op]
+
+    return ordered
+
+
+def _column(a, j, held):
+    """Column j of a range read, over its first `held` rows: blank past its data."""
+    line = [row[j] if j < len(row) else None for row in a.rows[:held]]
+    return line + [None] * (held - len(line))
+
+
+def where(areas, criteria, target=None):
+    """Where every criterion holds over its range: (how many cells, and the values of target's cells there, row by
+    row). The ranges and target are all of one size, else #VALUE!. The rows past every one's data are blank, and
+    counted at once."""
+    tests = [criterion(c) for c in criteria]
+    rows, cols = areas[0].extent
+    arrays = areas + ([target] if target is not None else [])
+    if any(a.extent != (rows, cols) for a in arrays):
+        raise _Err(XLError("#VALUE!"))
+    held = min(rows, max(len(a.rows) for a in arrays))
+    count, found = 0, []
+    for j in range(cols):
+        hits = range(held)
+        for a, test in zip(areas, tests, strict=True):
+            line = _column(a, j, held)
+            hits = [i for i in hits if test(line[i])]
+        count += len(hits)
+        if target is not None:
+            line = _column(target, j, held)
+            found += [(i, j, line[i]) for i in hits]
+    if held < rows and all(test(None) for test in tests):
+        count += (rows - held) * cols
+    if cols > 1:
+        found.sort(key=lambda f: f[:2])
+    return count, [v for _, _, v in found]
+
+
+def _numbers_found(values):
+    """The numbers among the cells found, in order: text and TRUE pass over, an error is the result."""
+    out = []
+    for v in values:
+        k, x = _kind(v)
+        if k == "err":
+            raise _Err(x)
+        if k == "num":
+            out.append(x)
+    return out
+
+
+def sum_found(values):
+    """SUMIF's sum: the plain one, a sum that all but cancels is not 0 (as it is in SUM)."""
+    return finite(sum(_numbers_found(values), 0.0))
+
+
+def average_found(values):
+    numbers = _numbers_found(values)
+    if not numbers:
+        raise _Err(XLError("#DIV/0!"))
+    return finite(sum(numbers)) / len(numbers)
+
+
+def max_found(values):
+    return max(_numbers_found(values), default=0.0)
+
+
+def min_found(values):
+    return min(_numbers_found(values), default=0.0)
+
+
+def _area(ev, node):
+    """A range argument of SUMIF and the rest: the cells it names, read once for the formula. What is not cells is
+    #VALUE! (COUNTIF(IF(TRUE,{1,2}),1)); a constant or an operator there Excel refuses as the formula is entered."""
+    if id(node) not in ev.areas:
+        v = ev.keep(node)
+        if not isinstance(v, Array) or v.rect is None:
+            raise _Err(XLError("#VALUE!"))
+        ev.areas[id(node)] = v
+    return ev.areas[id(node)]
+
+
+def _resized(ev, node, extent):
+    """SUMIF's and AVERAGEIF's sum range: its first cell and on, over the criteria range's size, whatever its own."""
+    while node[0] == "paren":
+        node = node[1]
+    sheet, r1, c1 = (ev.rect_of(node) if node[0] in ("ref", "name") else _area(ev, node).rect)[:3]
+    r2, c2 = r1 + extent[0] - 1, c1 + extent[1] - 1
+    if r2 > MAX_ROW or c2 > MAX_COL:
+        raise VBANotImplemented("a sum range that runs past the edge of the sheet")
+    return ev.range_values((sheet, r1, c1, r2, c2))
+
+
+def resized_reads(tree, rect_of):
+    """The cells SUMIF and AVERAGEIF read past their sum range (see _resized), for knowing when they are stale:
+    [(sheet, r1, c1, r2, c2)], or None where their ranges are not references the formula names (INDEX(...)) and
+    what they read is known only as they are worked out."""
+    out = []
+    for node in _all(tree):
+        if node[0] != "func" or node[1] not in ("SUMIF", "AVERAGEIF") or len(node[2]) != 3:
+            continue
+        area, given = node[2][0], node[2][2]
+        while area[0] == "paren":
+            area = area[1]
+        while given[0] == "paren":
+            given = given[1]
+        if area[0] not in ("ref", "name") or given[0] not in ("ref", "name"):
+            return None
+        try:
+            _, r1, c1, r2, c2 = rect_of(area)
+            sheet, s1, t1 = rect_of(given)[:3]
+        except _Err:
+            continue  # a #REF! or #NAME? reads nothing
+        out.append((sheet, s1, t1, min(s1 + r2 - r1, MAX_ROW), min(t1 + c2 - c1, MAX_COL)))
+    return out
+
+
+def _found(ev, args, first):
+    """COUNTIFS and the like: the (range, criterion) pairs from argument `first` on."""
+    pairs = range(first, len(args) - 1, 2)
+    return [_area(ev, args[i]) for i in pairs], [ev.ev(args[i + 1]) for i in pairs]
+
+
+def f_countif(ev, args):
+    return float(where(*_found(ev, args, 0))[0])
+
+
+def _one_criterion(ev, args):
+    """SUMIF's and AVERAGEIF's cells found: in their sum range, or in the criteria range itself."""
+    area = _area(ev, args[0])
+    target = _resized(ev, args[2], area.extent) if len(args) > 2 else area
+    return where([area], [ev.ev(args[1])], target)[1]
+
+
+def f_sumif(ev, args):
+    return sum_found(_one_criterion(ev, args))
+
+
+def f_averageif(ev, args):
+    return average_found(_one_criterion(ev, args))
+
+
+def _many_criteria(ev, args):
+    """SUMIFS's and the like's cells found: in their first argument, all their ranges of one size."""
+    return where(*_found(ev, args, 1), _area(ev, args[0]))[1]
+
+
+def f_sumifs(ev, args):
+    return sum_found(_many_criteria(ev, args))
+
+
+def f_averageifs(ev, args):
+    return average_found(_many_criteria(ev, args))
+
+
+def f_maxifs(ev, args):
+    return max_found(_many_criteria(ev, args))
+
+
+def f_minifs(ev, args):
+    return min_found(_many_criteria(ev, args))
+
+
+# How many arguments SUMIF and the rest take, (fewest, most, step), and which must be references (TAKES's r): Excel
+# refuses as it is entered (error 1004) a formula that gives them another number, or anything but a reference or a
+# function that may hand back cells where they want one (a constant, an operator, SUM(...)).
+_ARGUMENTS = {"COUNTIF": (2, 2, 1), "SUMIF": (2, 3, 1), "AVERAGEIF": (2, 3, 1), "COUNTIFS": (2, 254, 2),
+              "SUMIFS": (3, 255, 2), "AVERAGEIFS": (3, 255, 2), "MAXIFS": (3, 255, 2), "MINIFS": (3, 255, 2)}  # fmt: skip
+_GIVES_CELLS = {"IF", "INDEX", "OFFSET", "INDIRECT", "CHOOSE", "XLOOKUP"}
+
+
+def check_entry(text):
+    """Excel's refusals, as a formula is entered, of what it gives SUMIF and the rest (see _ARGUMENTS)."""
+    from .errors import VBARuntimeError  # noqa: PLC0415
+
+    upper = text.upper()
+    if not any(name in upper for name in _ARGUMENTS):
+        return
+    try:
+        tree = parse(text)
+    except VBANotImplemented:
+        return
+    for node in _all(tree):
+        if node[0] != "func" or node[1] not in _ARGUMENTS:
+            continue
+        name, args = node[1], node[2]
+        fewest, most, step = _ARGUMENTS[name]
+        refused = not fewest <= len(args) <= most or (len(args) - fewest) % step
+        for i, a in enumerate(args if not refused else ()):
+            while a[0] == "paren":
+                a = a[1]
+            if TAKES[name][i] != "r" or a[0] in ("ref", "name") or (a[0] == "func" and a[1] in _GIVES_CELLS):
+                continue
+            unknown = a[0] == "func" and (a[1] not in EXCEL_FUNCTIONS or a[1] in _MANY_RESULTS)
+            if unknown or a[0] in ("at", "err"):  # a function that may hand back cells, @, #REF!: not checked
+                what = f"{a[1]}(...)" if a[0] == "func" else "@" if a[0] == "at" else a[1]
+                raise VBANotImplemented(f"{name} given {what} for a range: whether Excel takes it is not known")
+            refused = True
+        if refused:
+            raise VBARuntimeError(1004, "Application-defined or object-defined error")
+
+
 def _cells_named(ev, node):
     """The cells an argument names, (sheet, r1, c1, r2, c2): a reference, or what a function hands back as cells."""
     while node[0] == "paren":
@@ -1646,4 +1987,12 @@ FUNCTIONS = {
     "ROWS": f_rows,
     "COLUMNS": f_columns,
     "SINGLE": f_single,
+    "COUNTIF": f_countif,
+    "COUNTIFS": f_countif,
+    "SUMIF": f_sumif,
+    "SUMIFS": f_sumifs,
+    "AVERAGEIF": f_averageif,
+    "AVERAGEIFS": f_averageifs,
+    "MAXIFS": f_maxifs,
+    "MINIFS": f_minifs,
 }

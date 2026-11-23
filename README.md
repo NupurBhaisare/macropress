@@ -217,13 +217,13 @@ it models.
 It stops with "not modelled" on:
 
 - deleting or inserting rows, columns or cells (`Rows(5).Delete`), which would have to move every reference to them
-- setting formats: number formats, fonts, colours, borders
+- setting fonts, colours and borders (number formats are modelled)
 - reaching outside the workbook: `CreateObject`, Outlook, `Shell`, files and folders (`Dir`, `Kill`), other workbooks
 - UserForms, charts, pivot tables, adding sheets or workbooks
 
 Two gaps do not stop a run, and the report names them when they apply:
 
-- worksheet functions it has not implemented yet, such as `SUMIF` and `COUNTIF`: a formula using one is saved
+- worksheet functions it has not implemented yet, such as `INDIRECT` and `TEXT`: a formula using one is saved
   without a value, for Excel to calculate, and a macro that reads its value stops
 - event procedures (`Worksheet_Change`, `Workbook_Open`) do not run
 

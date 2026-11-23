@@ -189,7 +189,7 @@
      "2": 1004.0,
      "4": 1004.0,
      "5": "[Out]",
-     "6": "[Integer:163]"
+     "6": "[Integer:164]"
     }
    }
   }
@@ -207,6 +207,8 @@
   "T_cdblb0": "reading '($5)' as a number: whether VBA takes a currency sig",
   "T_cdblb3": "reading '$ 5' as a number: whether VBA takes a currency sign",
   "T_cf03": "writing a Currency to a cell formatted as Text",
+  "T_ci_more2": "reading CI!AF13: a formula whose value could not be calculat",
+  "T_ci_regional": "reading CI!AK1: a formula whose value could not be calculate",
   "T_code38": "the number format '0.00 kg': how Excel reads 'k' in it is no",
   "T_code40": "the number format '0.0x': how Excel reads 'x' in it is not m",
   "T_code64": "the number format 'Text': how Excel reads 'T' in it is not m",
@@ -229,7 +231,6 @@
   "T_h077": "reading FX!AH77: a formula whose value could not be calculat",
   "T_h089": "reading FX!AH89: a formula whose value could not be calculat",
   "T_h103": "reading FX!AH103: a formula whose value could not be calcula",
-  "T_ii22": "reading FX!AJ1: a formula whose value could not be calculate",
   "T_isnum1": "reading '$5' as a number: whether VBA takes a currency sign ",
   "T_isnumb0": "reading '($5)' as a number: whether VBA takes a currency sig",
   "T_isnumb3": "reading '$ 5' as a number: whether VBA takes a currency sign",

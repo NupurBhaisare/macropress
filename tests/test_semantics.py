@@ -637,6 +637,29 @@ class ExcelModel(Runner):
         # they are written in the formula, not where they are read from cells; an empty argument is a 0
         self.assertEqual(dict(zip(shows, self.prints("\n".join(lines)), strict=True)), shows)
 
+    def test_conditional_sums_and_counts_find_the_cells_excel_finds(self):
+        body = (
+            'Range("A1").Value = 5\nRange("A2").Value = "\'05"\nRange("A3").Value = "apple"\nRange("A4").Value = "APPLE pie"\n'
+            'Range("A6").Value = True\nRange("A7").Formula = "="""""\nFor i = 1 To 7\nCells(i, 2).Value = 2 ^ (i - 1)\nNext\n'
+            'Range("D1").Formula = "=SUMIF(A1:A7,5,B1:B7)"\nRange("D2").Formula = "=SUMIF(A1:A7,""<>5"",B1:B7)"\n'
+            'Range("D3").Formula = "=SUMIF(A1:A7,""apple*"",B1:B7)"\nRange("D4").Formula = "=SUMIF(A1:A7,"""",B1:B7)"\n'
+            'Range("D5").Formula = "=COUNTIF(A1:A7,"">4"")"\nRange("D6").Formula = "=SUMIF(A1:A3,""<>"",B5)"\n'
+            'Range("D7").Formula = "=AVERAGEIF(A1:A7,""zzz"")"\nRange("D8").Formula = "=MAXIFS(B1:B7,A1:A7,""*"")"\n'
+            'Range("D9").Formula = "=COUNTIFS(A1:A7,""<>"",B1:B7,"">8"")"\n'
+            'Debug.Print Range("D1").Value, Range("D2").Value, Range("D3").Value, Range("D4").Value, Range("D5").Value\n'
+            'Debug.Print Range("D6").Value, CStr(Range("D7").Value), Range("D8").Value, Range("D9").Value\n'
+            'Range("B6").Value = 100\nDebug.Print Range("D6").Value\n'
+            'Debug.Print WorksheetFunction.CountIf(Range("A1:A7"), "apple"), '
+            'WorksheetFunction.SumIfs(Range("B1:B7"), Range("A1:A7"), "<>", Range("A1:A7"), "<>*")\n'
+            'On Error Resume Next\nRange("E1").Formula = "=SUMIF({1,2},1)"\nDebug.Print Err.Number, IsEmpty(Range("E1").Value)'
+        )
+        # 5 finds "05" too, but "<>5" and ">4" pass it by; "" finds blank cells and empty text; SUMIF reads its sum
+        # range from its first cell over the criteria range's size (B5:B7), and is kept current through all of it
+        self.assertEqual(
+            self.prints(body),
+            ["3 126 12 80 1", "112 Error 2007 64 2", "180", "1 101", "1004 True"],
+        )
+
     def test_a_formula_that_wants_one_value_takes_its_own_row_or_column_of_a_range(self):
         body = (
             'Range("F1").Value = 1\nRange("F2").Value = 2\nRange("F3").Value = 3\n'

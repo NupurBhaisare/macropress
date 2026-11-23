@@ -176,7 +176,7 @@ def _sheet(rows):
 
 
 def test_a_formulas_saved_value_stands_until_a_cell_it_reads_changes(tmp_path):
-    cells = '<c r="A1"><v>2</v></c><c r="B1"><f>SUMIF(A1:A2,"&gt;0")+A1</f><v>5</v></c><c r="C1"><f>A1*3</f></c>'
+    cells = '<c r="A1"><v>2</v></c><c r="B1"><f>MEDIAN(A1:A2)+A1</f><v>5</v></c><c r="C1"><f>A1*3</f></c>'
     path = _workbook(tmp_path / "in.xlsx", {**PARTS, "xl/worksheets/sheet1.xml": _sheet(f'<row r="1">{cells}</row>')})
     # C1 was saved with no value: it is calculated. B1, which the evaluator can't read, keeps its saved value while
     # A1 does, and once A1 changes its value is unknown, not guessed.

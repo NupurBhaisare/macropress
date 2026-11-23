@@ -18,7 +18,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
 | 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font` (1.1, 1.3, 1.4 and 1.5 are done) | nothing | small, five pieces |
-| 2 | [Worksheet functions](#2-worksheet-functions) | `SUMIFS`, `VLOOKUP(…, TRUE)`, `Application.Match`, `WorksheetFunction.CountIf` (2.1 is done) | nothing | large, ships in slices |
+| 2 | [Worksheet functions](#2-worksheet-functions) | `VLOOKUP(…, TRUE)`, `Application.Match`, `INDIRECT`, `TEXT` (2.1 and 2.2 are done) | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
 | 5 | [Appearance](#5-appearance) | `Font`, `Interior`, `Borders`, `ColumnWidth`, `Merge` | 1, 4 | large |
@@ -151,6 +151,15 @@ function MacroPress does not model, and arrays of more than two whole columns.
 ### 2.2 Conditional sums and counts
 
 `SUMIF(S)`, `COUNTIF(S)`, `AVERAGEIF(S)`, `MAXIFS`, `MINIFS`.
+
+**Status**: done, recorded from Excel first, in formulas and from `WorksheetFunction`. What it settled: `5`, `"5"`
+and `"05"` all find the number 5 and the text `"05"`, `" 5"`, `"5.0"`; `"<>5"` finds that text all the same, and
+`">4"` passes it over. Text is compared to 15 digits as the number it reads as, so the account numbers
+`"1234567890123456"` and `"1234567890123457"` are found by either, as Excel finds them. `"TRUE"` finds `TRUE`, never
+the text or 1; `"#N/A"` finds the error; a blank criterion is 0; `"="` finds blank cells, `""` empty text as well.
+Sums are not rounded to 0 as `SUM`'s are. A range where a criterion is wanted gives the formula's own row (and
+`#VALUE!` outside it, which finds only `#VALUE!` cells). Left open: text that reads as a date or money, in a criterion or in a
+cell a number is looked for in, which is read by regional settings.
 
 - A criterion is a value, or an operator and a value: `">5"`, `"<>"` (not blank), `"="` (blank), wildcards
   `* ? ~` for text, no regard to case.

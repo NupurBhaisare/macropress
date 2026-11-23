@@ -43,6 +43,12 @@ The first public release.
   `CONCATENATE`; `IF`, `INDEX` and `XLOOKUP` hand back cells. `Formula` and `Formula2` show a formula as Excel shows
   it, `@` and all, and formula text is kept as Excel keeps it. A dynamic-array formula is saved as one, in any
   workbook.
+- Conditional sums and counts ([roadmap](docs/roadmap.md), 2.2), recorded from Excel first (19 more tests in the
+  parity suite): `SUMIF`, `SUMIFS`, `COUNTIF`, `COUNTIFS`, `AVERAGEIF`, `AVERAGEIFS`, `MAXIFS` and `MINIFS`, in
+  formulas and from `WorksheetFunction`. Criteria find what Excel finds: numbers and the text that reads as them,
+  operators, wildcards, blanks, `TRUE` and errors. `SUMIF`'s sum range is read over the criteria range's size, and
+  the formula is kept current through all of it. A formula giving them a constant where a range is wanted, or the
+  wrong number of arguments, is refused as Excel refuses it.
 
 ### Fixed
 

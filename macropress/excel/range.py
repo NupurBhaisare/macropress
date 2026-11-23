@@ -66,10 +66,12 @@ def _trend(ys):
 
 
 def _check_formula(text):
-    """Excel refuses a formula with a number too large to type (1E+308) as it is entered: error 1004."""
+    """Excel refuses a formula with a number too large to type (1E+308) as it is entered: error 1004. So too one
+    giving SUMIF and the rest what they cannot take (see formula.check_entry)."""
     for kind, piece in fx.pieces(text):
         if kind == "num" and typed_number(piece) is None:
             raise VBARuntimeError(1004, "Application-defined or object-defined error")
+    fx.check_entry(text)
 
 
 class Clipboard:

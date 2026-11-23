@@ -223,7 +223,7 @@ It stops with "not modelled" on:
 
 Two gaps do not stop a run, and the report names them when they apply:
 
-- worksheet functions it has not implemented yet, such as `INDIRECT` and `TEXT`: a formula using one is saved
+- worksheet functions it has not implemented yet, such as `TEXT` and `EOMONTH`: a formula using one is saved
   without a value, for Excel to calculate, and a macro that reads its value stops
 - event procedures (`Worksheet_Change`, `Workbook_Open`) do not run
 

@@ -189,7 +189,7 @@
      "2": 1004.0,
      "4": 1004.0,
      "5": "[Out]",
-     "6": "[Integer:164]"
+     "6": "[Integer:165]"
     }
    }
   }
@@ -234,6 +234,10 @@
   "T_isnum1": "reading '$5' as a number: whether VBA takes a currency sign ",
   "T_isnumb0": "reading '($5)' as a number: whether VBA takes a currency sig",
   "T_isnumb3": "reading '$ 5' as a number: whether VBA takes a currency sign",
+  "T_lk_external": "reading LK!AF1: a formula whose value could not be calculate",
+  "T_lk_match": "reading LK!U15: a formula whose value could not be calculate",
+  "T_lk_unsorted1": "reading LK!Z1: a formula whose value could not be calculated",
+  "T_lk_unsorted8": "reading LK!Z8: a formula whose value could not be calculated",
   "T_m08b": "writing a Currency to a cell formatted as Text",
   "T_nf_array": "NumberFormat set from an array",
   "T_pr_fill": "cutting cells of a protected sheet (unverified)",

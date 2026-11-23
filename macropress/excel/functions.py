@@ -88,26 +88,6 @@ class WorksheetFunction(VBAObject):
                     nums.append(number)
         return nums
 
-    def m_xlookup(self, lookup_value, lookup_array, return_array, if_not_found=None, match_mode=None, search_mode=None):
-        if (match_mode not in (None, 0) and to_long(match_mode) != 0) or (
-            search_mode not in (None, 1) and to_long(search_mode) != 1
-        ):
-            raise VBANotImplemented("XLookup with match_mode or search_mode")
-        if isinstance(lookup_value, VBAArray) or (isinstance(lookup_value, Range) and lookup_value.get_count() != 1):
-            # Excel looks up each value of an array and returns an array of results
-            raise VBANotImplemented("XLookup with an array or a range of several cells as its lookup value")
-        keys = self._cells(lookup_array)
-        values = self._cells(return_array)
-        target = self._cells(lookup_value)[0]
-        for k, v in zip(keys, values, strict=False):
-            if _xl_equal(k, target):
-                if isinstance(v, XLError):
-                    raise self._fail("XLookup")
-                return v
-        if if_not_found is not None:
-            return default_value(if_not_found)
-        raise self._fail("XLookup")
-
     def m_sum(self, *args):
         try:
             return fx.total(self._numbers("Sum", args))
@@ -195,12 +175,117 @@ class WorksheetFunction(VBAObject):
     def m_minifs(self, min_range, *args):
         return self._found("MinIfs", lambda: fx.min_found(fx.where(*self._pairs(args), self._area(min_range))[1]))
 
+    # --- VLookup, Match and the rest: the formula functions, given VBA's values ---
+    def _looked_in(self, arg):
+        """What a lookup looks in: a Range's cells as a formula reads them, still the cells they are, or a VBA array,
+        one of a single dimension being a row."""
+        if isinstance(arg, Range):
+            return self._area(arg)
+        if isinstance(arg, VBAArray) and arg.bounds is not None and len(arg.bounds) in (1, 2):
+            if len(arg.bounds) == 1:
+                ((lo, hi),) = arg.bounds
+                return fx.Array([[_in_formula(arg.get([i])) for i in range(lo, hi + 1)]])
+            (r1, r2), (c1, c2) = arg.bounds
+            return fx.Array([[_in_formula(arg.get([r, c])) for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)])
+        raise VBANotImplemented(f"a lookup in a {type(default_value(arg)).__name__}")
 
-def _xl_equal(a, b):
-    if isinstance(a, str) and isinstance(b, str):
-        return a.casefold() == b.casefold()
-    if is_numeric_value(a) and is_numeric_value(b):
-        return float(a) == float(b)
-    if isinstance(a, bool) and isinstance(b, bool):
-        return a == b
-    return False
+    def _looked_for(self, value):
+        """The value a lookup looks for: a Range of one cell gives the cell's value; a VBA Date stays one (see
+        _lookup)."""
+        if isinstance(value, Range):
+            if value.get_count() != 1:
+                raise VBANotImplemented("a Range of several cells looked up from VBA")
+            return self._area(value).cell(0, 0)
+        v = default_value(value)
+        return v if isinstance(v, dt.datetime) else _in_formula(v)
+
+    def _lookup(self, name, fn, key, *args, not_found=None, searched=None):
+        """fn, a formula function, given VBA's values (a trailing None is an argument left out, another one left
+        empty): its result, cells as a Range; an error it comes to is error 1004. VBA hands a Date over as text
+        written by the regional settings, which finds no number: nothing at all where the values searched (the first
+        array, unless told) hold no text."""
+        if isinstance(key, dt.datetime):
+            searched = searched or next(a for a in args if isinstance(a, fx.Array))
+            if any(isinstance(v, str) and not isinstance(v, XLError) for v in searched.values()):
+                raise VBANotImplemented(f"{name} of a Date, which VBA hands over as text written by regional settings")
+            if not_found is not None:
+                return not_found
+            raise self._fail(name)
+        given = list(args)
+        while given and given[-1] is None:
+            given.pop()
+        nodes = [("const", key)] + [("missing",) if a is None else ("const", a) for a in given]
+        try:
+            v = fn(fx.Evaluator(None, None, None), nodes)
+        except fx._Err:
+            raise self._fail(name) from None
+        if isinstance(v, fx.Array):
+            if v.extent != (1, 1):
+                raise VBANotImplemented(f"{name} handing several cells or values back to VBA")
+            if v.rect is not None:
+                sheet, r, c = v.rect[:3]
+                return Range(sheet, r, c, r, c)
+            v = v.cell(0, 0)
+        if isinstance(v, XLError):
+            raise self._fail(name)
+        if v is None:
+            raise VBANotImplemented(f"{name} finding a blank cell, from VBA")
+        return v
+
+    def m_vlookup(self, lookup_value, table_array, col_index_num, range_lookup=None):
+        table = self._looked_in(table_array)
+        return self._lookup("VLookup", fx.f_vlookup, self._looked_for(lookup_value), table, _in_formula(col_index_num),
+                            _in_formula(range_lookup), searched=fx.Array([row[:1] for row in table.rows]))  # fmt: skip
+
+    def m_hlookup(self, lookup_value, table_array, row_index_num, range_lookup=None):
+        table = self._looked_in(table_array)
+        return self._lookup("HLookup", fx.f_hlookup, self._looked_for(lookup_value), table, _in_formula(row_index_num),
+                            _in_formula(range_lookup), searched=fx.Array(table.rows[:1]))  # fmt: skip
+
+    def m_match(self, lookup_value, lookup_array, match_type=None):
+        return self._lookup("Match", fx.f_match, self._looked_for(lookup_value), self._looked_in(lookup_array),
+                            _in_formula(match_type))  # fmt: skip
+
+    def m_xmatch(self, lookup_value, lookup_array, match_mode=None, search_mode=None):
+        return self._lookup("XMatch", fx.f_xmatch, self._looked_for(lookup_value), self._looked_in(lookup_array),
+                            _in_formula(match_mode), _in_formula(search_mode))  # fmt: skip
+
+    def m_lookup(self, lookup_value, lookup_vector, result_vector=None):
+        result = None if result_vector is None else self._looked_in(result_vector)
+        return self._lookup(
+            "Lookup", fx.f_lookup, self._looked_for(lookup_value), self._looked_in(lookup_vector), result
+        )
+
+    def m_xlookup(self, lookup_value, lookup_array, return_array, if_not_found=None, match_mode=None, search_mode=None):
+        missing = None if if_not_found is None else default_value(if_not_found)
+        return self._lookup("XLookup", fx.f_xlookup, self._looked_for(lookup_value), self._looked_in(lookup_array),
+                            self._looked_in(return_array), None if missing is None else _in_formula(missing),
+                            _in_formula(match_mode), _in_formula(search_mode), not_found=missing)  # fmt: skip
+
+    def m_index(self, array, row_num, column_num=None):
+        return self._lookup("Index", lambda ev, nodes: fx.f_index(ev, [nodes[1], nodes[0], *nodes[2:]]),
+                            _in_formula(row_num), self._looked_in(array), _in_formula(column_num))  # fmt: skip
+
+    def m_choose(self, index_num, *values):
+        k = _in_formula(index_num)
+        try:
+            k = fx.num(k)
+        except fx._Err:
+            raise self._fail("Choose") from None
+        if not 1 <= k < len(values) + 1:
+            raise self._fail("Choose")
+        return values[int(k) - 1]
+
+
+def _in_formula(v):
+    """A VBA value as a formula sees it: Empty is blank, a date its serial number, a Currency a Double."""
+    v = default_value(v)
+    if v is EMPTY or v is None:
+        return None
+    if isinstance(v, dt.datetime):
+        return date_to_serial(v)
+    if isinstance(v, (bool, str)):
+        return v
+    if is_numeric_value(v):
+        return float(v)
+    raise VBANotImplemented(f"a {type(v).__name__} given to a worksheet function")

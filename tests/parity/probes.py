@@ -1671,6 +1671,137 @@ T("TCond", "ci_entry2", *[x for k, f in enumerate(['=COUNTIF(5,">1")', '=COUNTIF
                                                     "=COUNTIF(,5)", '=SUMIF(A1:A5,">1",)', "=COUNTIF(A1:A5,)"], 1)
                           for x in (f'E: {CI}.Range("AI{k}").Formula = {q(f)}', f'V: {CI}.Range("AI{k}").Value')])
 SHEETS += [("CI", [8] * 30, CI_ROWS)]
+
+# ------------------------------------------------------------------------------------------- group 2.3: lookups
+# LK holds lookup tables: A sorted numbers (20 twice), B their names, C row numbers; E unsorted; H text keys (a number
+# and TRUE among them); K mixed kinds; M sorted text; P sorted descending (80 twice); B40:K42 the first table lying
+# down. A test writes its formulas to a column of its own (S on); a formula in row 13 or below has no row of A1:A10.
+_LK = {}
+for k in range(10):
+    _LK[(k + 1, 1)], _LK[(k + 1, 2)], _LK[(k + 1, 3)] = [10, 20, 20, 30, 40, 50, 60, 70, 80, 90][k], f"{'abcdefghij'[k]}{[10, 20, 20, 30, 40, 50, 60, 70, 80, 90][k]}", k + 1
+    _LK[(k + 1, 5)], _LK[(k + 1, 6)] = [30, 10, 50, 20, 40, 60, 5, 70, 15, 25][k], k + 1
+    _LK[(k + 1, 11)], _LK[(k + 1, 12)] = [1, "x", 3, True, 5, None, 7, "10", 9, 11][k], k + 1
+    _LK[(40, k + 2)], _LK[(41, k + 2)], _LK[(42, k + 2)] = _LK[(k + 1, 1)], _LK[(k + 1, 2)], k + 1
+for k, v in enumerate(["apple", "Banana", "cherry", "a*b", "x?", "5", "date", "Apple", "applesauce", 5, True]):
+    _LK[(k + 1, 8)], _LK[(k + 1, 9)] = v, k + 1
+for k, v in enumerate(["apple", "banana", "cherry", "date", "fig", "grape", "kiwi", "lemon"]):
+    _LK[(k + 1, 13)], _LK[(k + 1, 14)] = v, k + 1
+for k, v in enumerate([90, 80, 80, 50, 40, 20, 10, 5]):
+    _LK[(k + 1, 16)], _LK[(k + 1, 17)] = v, k + 1
+LK_ROWS = [[_LK.get((r, c)) for c in range(1, 18)] for r in range(1, 43)]
+LK = W("LK")
+
+
+def TL(name, column, formulas, first=1):
+    """Formulas written down a column of LK from row `first`, each value read."""
+    TA(name, "LK", column, list(enumerate(formulas, first)), module="TLookup")
+
+
+TL("lk_vexact", "S", ["=VLOOKUP(30,A1:C10,2,FALSE)", "=VLOOKUP(20,A1:C10,3,FALSE)", "=VLOOKUP(35,A1:C10,2,FALSE)",
+                      '=VLOOKUP("banana",H1:I11,2,FALSE)', '=VLOOKUP("app*",H1:I11,2,FALSE)', '=VLOOKUP("a~*b",H1:I11,2,FALSE)',
+                      '=VLOOKUP("?",H1:I11,2,FALSE)', "=VLOOKUP(5,H1:I11,2,FALSE)", '=VLOOKUP("5",H1:I11,2,FALSE)',
+                      "=VLOOKUP(30,A1:C10,0,FALSE)", "=VLOOKUP(30,A1:C10,4,FALSE)", "=VLOOKUP(30,A1:C10,2,0)",
+                      "=VLOOKUP(30,A1:C10,2.9,FALSE)", "=VLOOKUP(Z99,A1:C10,2,FALSE)", "=VLOOKUP(TRUE,H1:I11,2,FALSE)"])
+TL("lk_vapprox", "T", ["=VLOOKUP(35,A1:C10,2,TRUE)", "=VLOOKUP(20,A1:C10,3,TRUE)", "=VLOOKUP(5,A1:C10,2,TRUE)", "=VLOOKUP(1000,A1:C10,3)",
+                       "=VLOOKUP(35,A1:C10,2,1)", '=VLOOKUP("c",M1:N8,2,TRUE)', '=VLOOKUP("zzz",M1:N8,2)', '=VLOOKUP("Cherry",M1:N8,2)',
+                       '=VLOOKUP("a",M1:N8,2)', "=VLOOKUP(90,A1:C10,3)", "=VLOOKUP(35,A1:C10,2,)", '=VLOOKUP("*",M1:N8,2)',
+                       "=VLOOKUP(10,A1:C10,3,TRUE)", '=VLOOKUP("d",M1:N8,2,TRUE)', "=VLOOKUP(Z99,A1:C10,2,TRUE)"])
+TL("lk_match", "U", ["=MATCH(30,A1:A10,0)", "=MATCH(20,A1:A10,0)", "=MATCH(20,A1:A10,1)", "=MATCH(20,A1:A10)", "=MATCH(35,A1:A10,1)",
+                     "=MATCH(5,A1:A10,1)", "=MATCH(50,P1:P8,-1)", "=MATCH(45,P1:P8,-1)", "=MATCH(80,P1:P8,-1)", "=MATCH(100,P1:P8,-1)",
+                     '=MATCH("b*",H1:H11,0)', '=MATCH("apple",H1:H11,0)', "=MATCH(30,A1:C10,0)", "=MATCH(30,A1:A10,2)",
+                     "=MATCH(30,A1:A10,-0.5)"])
+TL("lk_hlookup", "V", ["=HLOOKUP(30,B40:K42,2,FALSE)", "=HLOOKUP(35,B40:K42,3,TRUE)", "=HLOOKUP(30,B40:K42,4,FALSE)",
+                       '=HLOOKUP("x",B40:K42,2,FALSE)', "=HLOOKUP(20,B40:K42,3,TRUE)", "=HLOOKUP(1000,B40:K42,3)", "=HLOOKUP(5,B40:K42,3)",
+                       "=MATCH(30,B40:K40,0)", "=MATCH(35,B40:K40)", '=HLOOKUP("d*",B41:K42,2,FALSE)'])
+TL("lk_xlookup", "W", ['=XLOOKUP(35,A1:A10,B1:B10,"none",-1)', '=XLOOKUP(35,A1:A10,B1:B10,"none",1)', "=XLOOKUP(20,A1:A10,C1:C10,,0,-1)",
+                       '=XLOOKUP("app*",H1:H11,I1:I11,,2)', '=XLOOKUP("app*",H1:H11,I1:I11)', '=XLOOKUP(35,E1:E10,F1:F10,"none",-1)',
+                       '=XLOOKUP(35,E1:E10,F1:F10,"none",1)', "=XLOOKUP(30,A1:A10,B1:B10,,0,2)", "=XLOOKUP(50,P1:P8,Q1:Q8,,0,-2)",
+                       '=XLOOKUP(99,A1:A10,B1:B10,"none")', "=XLOOKUP(30,A1:A10,B1:C10)", "=XLOOKUP(30,A1:A9,B1:B10)",
+                       "=XLOOKUP(20,A1:A10,C1:C10,,0,2)", '=XLOOKUP(25,A1:A10,C1:C10,"none",-1,-1)', '=XLOOKUP(20,A1:A10,C1:C10,"none",1,-1)'])
+TL("lk_xmatch", "X", ["=XMATCH(30,A1:A10)", "=XMATCH(35,A1:A10,-1)", "=XMATCH(35,A1:A10,1)", "=XMATCH(20,A1:A10,0,-1)", '=XMATCH("b*",H1:H11,2)',
+                      "=XMATCH(99,A1:A10)", "=XMATCH(35,E1:E10,1)", "=XMATCH(30,A1:A10,0,2)", "=XMATCH(20,A1:A10,0,2)", "=XMATCH(45,P1:P8,1,-2)",
+                      '=XMATCH("APPLE",H1:H11)', "=XMATCH(5,H1:H11)", "=XMATCH(35,E1:E10,-1)", "=XMATCH(20,A1:A10,-1)", "=XMATCH(30,A1:C10)"])
+TL("lk_lookup", "Y", ["=LOOKUP(35,A1:A10,B1:B10)", "=LOOKUP(35,A1:B10)", "=LOOKUP(35,B40:K41)", "=LOOKUP(5,A1:A10,B1:B10)", "=LOOKUP(20,A1:A10,C1:C10)",
+                      '=LOOKUP("c",M1:M8,N1:N8)', "=LOOKUP(1000,A1:C10)", "=LOOKUP(35,A1:A10,C1:C5)", "=LOOKUP(90,A1:A10,B1:B10)"])
+# what a value too long, and numbers off by their last bit, do: in the test's own columns, AL to look in, AM to give back
+T("TLookup", "lk_edge", f'{LK}.Range("AL1").Value = 0.1 + 0.2', f'{LK}.Range("AL2").Value = 0.5', f'{LK}.Range("AL3").Value = "\'" & String(256, "a")',
+  f'{LK}.Range("AM1").Value = 1', f'{LK}.Range("AM2").Value = 2', f'{LK}.Range("AM3").Value = 3',
+  *[x for row, f in enumerate(["=VLOOKUP(0.3,AL1:AM2,2,FALSE)", "=VLOOKUP(0.3,AL1:AM2,2,TRUE)", "=MATCH(0.3,AL1:AL2,0)", "=XMATCH(0.3,AL1:AL2)",
+                               f'=VLOOKUP("{"a" * 255}",AL1:AM3,2,FALSE)', f'=MATCH("{"a" * 256}",AL1:AL3,0)', "=VLOOKUP(AL3,AL1:AM3,2,FALSE)",
+                               "=XLOOKUP(AL3,AL1:AL3,AM1:AM3)", '=VLOOKUP("",H1:I11,2,FALSE)', '=MATCH("",K1:K10,0)'], 1)
+    for x in FA("LK", f"AK{row}", f)])
+# approximate matches over unsorted data or mixed kinds: one formula a test, as each may be refused
+for k, f in enumerate(["=VLOOKUP(35,E1:F10,2,TRUE)", "=VLOOKUP(1000,E1:F10,2,TRUE)", "=VLOOKUP(6,K1:L10,2,TRUE)", "=VLOOKUP(100,K1:L10,2,TRUE)",
+                       "=LOOKUP(9.99E+307,E1:E10)", '=LOOKUP("zzzz",H1:H11)', "=MATCH(1000,E1:E10)", "=XLOOKUP(35,E1:E10,F1:F10,,-1,2)",
+                       '=VLOOKUP("x",K1:L10,2,TRUE)', "=MATCH(0,E1:E10,-1)"], 1):
+    T("TLookup", f"lk_unsorted{k}", *FA("LK", f"Z{k}", f))
+# which functions work an expression out whole in a formula that is not a dynamic array (rows 13 on: no row of A1:A10)
+TL("lk_whole", "AA", ["=MATCH(TRUE,A1:A10>25,0)", "=MATCH(1,INDEX((A1:A10=20)*(C1:C10=3),0),0)", "=LOOKUP(2,1/(E1:E10>20),F1:F10)",
+                      "=INDEX(A1:A10*2,3)", "=XLOOKUP(TRUE,A1:A10>25,B1:B10)", "=XMATCH(TRUE,A1:A10>25)", "=VLOOKUP(30,A1:C10*1,3,FALSE)",
+                      "=LOOKUP(2,1/(K1:K10<>\"\"),L1:L10)"], first=13)
+TL("lk_choose", "AB", ['=CHOOSE(2,"a","b","c")', '=CHOOSE(2.9,"a","b","c")', '=CHOOSE(0,"a","b")', '=CHOOSE(4,"a","b")', "=SUM(CHOOSE(2,A1:A3,A4:A6))",
+                       "=CHOOSE(1,A1:A10)", '=CHOOSE({1,2},"a","b")', "=SUM(CHOOSE({1,2},10,20))", '=COUNTIF(CHOOSE(1,A1:A10),">25")',
+                       '=VLOOKUP("e40",CHOOSE({1,2},B1:B10,A1:A10),2,FALSE)', "=CHOOSE(1,A1:A10)", "=ROWS(CHOOSE(2,A1:A3,A1:A5))"])
+TL("lk_range", "AC", ["=SUM(A1:INDEX(A1:A10,3))", "=SUM(INDEX(A1:A10,2):INDEX(A1:A10,4))", "=SUM(A1:INDEX(A:A,MATCH(40,A:A,0)))",
+                      "=ROWS(A1:INDEX(A:A,5))", "=SUM(INDEX(A1:C10,2,1):INDEX(A1:C10,3,3))", "=COUNTA(A1:INDEX(B:B,3))",
+                      "=SUM(INDEX(A1:A10,4):A2)", "=A1:INDEX(A1:A10,10)", "=SUM(A1:OFFSET(A1,2,0))", '=SUM(A1:INDIRECT("A3"))',
+                      "=SUM(C1:INDEX(C1:C10,MATCH(30,A1:A10,0)))", "=SUM(INDEX(A1:A10,2):INDEX(C1:C10,3))"])
+TL("lk_offset", "AD", ["=SUM(OFFSET(A1,1,0,3,1))", "=OFFSET(A1,2,1)", "=SUM(OFFSET(A1:A3,1,0))", "=OFFSET(A1,-1,0)", "=SUM(OFFSET(A1,0,0,COUNT(A:A),1))",
+                       "=OFFSET(A1,0,0,0,1)", "=SUM(OFFSET(A1:B2,0,0,2))", "=ROWS(OFFSET(A1,0,0,5))", "=OFFSET(A1,1,0,2,1)", "=OFFSET(A1,1.7,0)",
+                       "=SUM(OFFSET(A5,0,0,-2,1))", "=OFFSET(C10,1,0)", "=COLUMNS(OFFSET(A1,0,0,1,3))", "=SUM(OFFSET(AR!A1,0,0,3,1))"])
+TL("lk_indirect", "AE", ['=INDIRECT("A4")', '=SUM(INDIRECT("A1:A3"))', '=INDIRECT("AR!A2")', '=INDIRECT("R4C1",FALSE)', '=INDIRECT("nosuch!A1")',
+                         '=INDIRECT("A"&3)', '=INDIRECT("A1:A3")', '=INDIRECT("ZZZ1")', '=INDIRECT("")', '=INDIRECT("a4")', '=INDIRECT(" A4")',
+                         '=COUNTIF(INDIRECT("A1:A10"),">25")', '=INDIRECT("R[1]C[-30]",FALSE)', '=SUM(INDIRECT("A:A"))', "=INDIRECT(B4)"])
+T("TLookup", "lk_external", *FA("LK", "AF1", '=INDIRECT("[nosuch.xlsx]Sheet1!A1")'))
+# cells OFFSET and INDIRECT read change: they are worked out again (the test's own cells, AH to AI)
+T("TLookup", "lk_volatile", f'{LK}.Range("AH1").Value = 1', f'{LK}.Range("AH2").Value = 2', f'{LK}.Range("AH3").Value = 3',
+  *FA("LK", "AG1", "=SUM(OFFSET(AH1,0,0,3,1))"), *FA("LK", "AG2", '=INDIRECT("AH"&AI1)'), f'{LK}.Range("AH2").Value = 20',
+  f'V: {LK}.Range("AG1").Value', f'{LK}.Range("AI1").Value = 3', f'V: {LK}.Range("AG2").Value', f'{LK}.Range("AH3").Value = 30',
+  f'V: {LK}.Range("AG2").Value', *FA("LK", "AG3", "=SUM(AH1:INDEX(AH1:AH5,AI1))"), f'{LK}.Range("AI1").Value = 2', f'V: {LK}.Range("AG3").Value',
+  f'{LK}.Range("AH1").Value = 100', f'V: {LK}.Range("AG3").Value')
+# what Excel refuses as the formula is entered
+T("TLookup", "lk_entry", *[x for k, f in enumerate(["=OFFSET(5,1,1)", '=OFFSET("A1",1,1)', "=OFFSET(A1:A3*1,1,1)", "=VLOOKUP(1)", "=CHOOSE(1)",
+                                                     "=XLOOKUP(1,A1:A10)", "=INDIRECT()"], 1)
+                           for x in (f'E: {LK}.Range("AJ{k}").Formula = {q(f)}', f'V: {LK}.Range("AJ{k}").Value')])
+T("TLookup", "lk_view", *[x for k, f in enumerate(["=HLOOKUP(30,B40:K42,2,FALSE)", "=LOOKUP(35,A1:A10,B1:B10)", "=XMATCH(30,A1:A10)",
+                                                    "=CHOOSE(2,A1:A3,B1:B3)", "=OFFSET(A1,0,0,3,1)", "=OFFSET(A1,1,1)", "=SUM(OFFSET(A1,0,0,3,1))",
+                                                    '=INDIRECT("A1")', "=A1:INDEX(A1:A10,3)", "=MATCH(TRUE,A1:A10>25,0)", "=INDEX(A1:A10*2,3)",
+                                                    "=LOOKUP(2,1/(E1:E10>20),F1:F10)", '=VLOOKUP("e40",CHOOSE({1,2},B1:B10,A1:A10),2,FALSE)',
+                                                    "=MATCH(A1:A3,A1:A10,0)", "=CHOOSE(A1:A3,1,2)"], 1)
+                          for x in (f'{LK}.Range("AN{k}").Formula = {q(f)}', f'S: {LK}.Range("AN{k}").Formula2')])
+T("TLookup", "lk_dyn", *[x for cell, f, reads in [("AO1", "=XLOOKUP(30,A1:A10,B1:C10)", ["AO1", "AP1"]), ("AQ1", "=OFFSET(A1,0,0,3,1)", ["AQ1", "AQ3"]),
+                                                  ("AR1", '=INDIRECT("A2:A3")', ["AR1", "AR2"]), ("AS1", "=MATCH(TRUE,A1:A10>25,0)", ["AS1"]),
+                                                  ("AT1", "=CHOOSE({1,2},A1:A3,C1:C3)", ["AT1", "AU3"]), ("AV1", "=XLOOKUP({30;50},A1:A10,B1:B10)", ["AV1", "AV2"]),
+                                                  ("AW1", "=VLOOKUP(A1:A3,A1:C10,3,FALSE)", ["AW1", "AW3"])]
+                         for x in [f'{LK}.Range("{cell}").Formula2 = {q(f)}', *[f'V: {LK}.Range("{r}").Value' for r in reads]]])
+LR = {k: f'{LK}.Range("{k}")' for k in ["A1:C10", "A1:A10", "H1:I11", "H1:H11", "B40:K42", "B1:B10", "A4", "E1:E10", "P1:P8"]}
+T("TLookup", "lk_vba1", f'V: {WF}.VLookup(30, {LR["A1:C10"]}, 2, False)', f'E: x = {WF}.VLookup(35, {LR["A1:C10"]}, 2, False)',
+  f'V: {WF}.Match(35, {LR["A1:A10"]}, 1)', f'V: {WF}.Match("b*", {LR["H1:H11"]}, 0)', f'V: {WF}.Index({LR["A1:C10"]}, 4, 2)',
+  f'V: {WF}.HLookup(30, {LR["B40:K42"]}, 2, False)', f'V: {WF}.XMatch(35, {LR["A1:A10"]}, -1)', f'V: {WF}.Lookup(35, {LR["A1:A10"]}, {LR["B1:B10"]})',
+  f'V: {WF}.VLookup("banana", {LR["H1:I11"]}, 2, False)', f'V: {WF}.Choose(2, "a", "b")', f'E: x = {WF}.Match(5, {LR["A1:A10"]}, 1)',
+  f'V: {WF}.VLookup({LR["A4"]}, {LR["A1:C10"]}, 2, False)', f'S: TypeName({WF}.Index({LR["A1:A10"]}, 3))', f'V: {WF}.Index({LR["A1:A10"]}, 3)',
+  f'V: {WF}.XLookup(35, {LR["A1:A10"]}, {LR["B1:B10"]}, "none", 1)')
+T("TLookup", "lk_vba2", f'v = {LR["A1:C10"]}.Value', f"V: {WF}.VLookup(30, v, 2, False)", f"V: {WF}.Match(30, Array(10, 20, 30), 0)",
+  f"V: {WF}.Index(v, 4, 2)", f"V: {WF}.Match(25, Array(10, 20, 30))", f"E: x = {WF}.VLookup(30, Array(1, 2), 2, False)",
+  f'V: {WF}.XMatch("b*", Array("a", "bb", "c"), 2)', f'V: {WF}.Lookup(2, Array(1, 2, 3), Array("x", "y", "z"))',
+  f'V: {WF}.VLookup(DateSerial(2024, 1, 5), {LR["A1:C10"]}.Offset(0, 0), 2, True)', f'E: x = {WF}.Choose(3, "a", "b")',
+  f'V: {WF}.Match(80, {LR["P1:P8"]}, -1)', f'V: {WF}.Match(True, Array(False, True), 0)')
+# which of several equal values an approximate or a binary search lands on, and values of other kinds passed over
+TL("lk_dups1", "AX", ["=MATCH(9,{1,9,9},1)", "=MATCH(5,{5,5,5,5,5},1)", "=MATCH(2,{1,2,2,2,2,2,2,2,2,3},1)", "=MATCH(5,{1,5,5,5,9,9,9,9,9,9,9,9},1)",
+                      "=LOOKUP(5,{5,5,5,5,5})", "=VLOOKUP(5,{5,1;5,2;5,3},2,TRUE)", "=HLOOKUP(5,{5,5,5;1,2,3},2,TRUE)",
+                      '=MATCH(6,{1,"x",3,TRUE,5,"y",7},1)', '=MATCH("c",{"a",1,"b",2,"d"},1)', "=MATCH(7,{1,3,5,7,7,7,7,7,9},1)",
+                      "=MATCH(6,{1,3,5,5,5,5,9},1)"])
+TL("lk_dups2", "AY", ["=MATCH(9,{9,9,1},-1)", "=MATCH(5,{5,5,5,5,5},-1)", "=MATCH(2,{3,2,2,2,2,2,2,2,2,1},-1)", "=MATCH(4,{9,8,5,5,5,3},-1)",
+                      "=MATCH(5,{9,5,5,5,5,5,5,1},-1)", "=MATCH(7,{9,8,8,8,8,8,8,1},-1)", "=MATCH(8,{9,8,8,8,8,8,8,1},-1)",
+                      '=MATCH(4,{9,"x",8,5,TRUE,3},-1)', "=MATCH(9,{9,8,7},-1)", "=MATCH(1,{9,8,7},-1)", "=MATCH(8,{9,8,7},-1)"])
+TL("lk_dups3", "AZ", ["=XMATCH(5,{5,5,5,5,5},0,2)", "=XMATCH(5,{1,5,5,5,9},0,2)", "=XMATCH(6,{1,5,5,5,9},-1,2)", "=XMATCH(4,{1,5,5,5,9},1,2)",
+                      "=XMATCH(5,{9,5,5,5,1},0,-2)", "=XMATCH(6,{9,5,5,5,1},1,-2)", "=XMATCH(4,{9,5,5,5,1},-1,-2)", "=XMATCH(5,{1,5,5,5,9},0,-1)",
+                      "=XMATCH(6,{1,5,5,5,9},-1)", "=XMATCH(4,{1,5,5,5,9},1)", "=XMATCH(6,{1,5,5,5,9},-1,-1)", "=XMATCH(5,{1,2,5,5,5,5,5,5,9},0,2)",
+                      "=XMATCH(3,{1,2,5,5,5,5,5,5,9},1,2)", "=XMATCH(7,{1,2,5,5,5,5,5,5,9},-1,2)"])
+# a blank cell where a 0 or the next larger value is looked for (K6 is blank, K5 5, K7 7)
+TL("lk_blank", "BA", ["=MATCH(0,K1:K10,0)", "=XMATCH(0,K1:K10)", "=XMATCH(-5,K5:K7,1)", "=XMATCH(6,K5:K7,-1)", "=VLOOKUP(0,K1:L10,2,FALSE)",
+                      "=XLOOKUP(-5,K5:K7,L5:L7,,1)"])
+SHEETS += [("LK", [8] * 60, LK_ROWS)]
 SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
 def sheets(index):

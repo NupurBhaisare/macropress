@@ -74,8 +74,8 @@ the invoice example's `LowerPrices` allows.
 
 ## Good first issues
 
-- Formula functions that are used everywhere but not calculated yet: `HLOOKUP`, `VLOOKUP` with an approximate match,
-  `EOMONTH`, `ROUNDUP`, `IFS`. The [roadmap](docs/roadmap.md) (group 2) lists their edge cases.
+- Formula functions that are used everywhere but not calculated yet: `EOMONTH`, `ROUNDUP`, `IFS`, `TEXTJOIN`,
+  `NETWORKDAYS`. The [roadmap](docs/roadmap.md) (group 2) lists their edge cases.
 - More `Format` patterns (`"yyyy-mm-dd hh:nn"`, `"0%"`, `"mmm yyyy"`, ...).
 - `Range.Delete` and `Range.Insert`, moving every reference to the cells they move.
 - User-defined types (`Type ... End Type`): today they fail as a converter error, and should at least stop as

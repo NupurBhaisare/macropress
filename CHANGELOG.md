@@ -49,6 +49,12 @@ The first public release.
   operators, wildcards, blanks, `TRUE` and errors. `SUMIF`'s sum range is read over the criteria range's size, and
   the formula is kept current through all of it. A formula giving them a constant where a range is wanted, or the
   wrong number of arguments, is refused as Excel refuses it.
+- Lookups ([roadmap](docs/roadmap.md), 2.3), recorded from Excel first (34 more tests in the parity suite):
+  approximate matches in `VLOOKUP`, `HLOOKUP`, `MATCH` and `LOOKUP`, wildcards in exact ones, `MATCH` with -1, the
+  match and search modes of `XLOOKUP` and `XMATCH`, `CHOOSE`, `OFFSET`, `INDIRECT`, and ranges that end on a
+  function's cells (`A1:INDEX(A:A,5)`). Over values not in order a match is answered only where Excel's search cannot
+  land elsewhere. The same from `WorksheetFunction`, which takes VBA arrays as tables; `Index` and `XLookup` hand back
+  a `Range`.
 
 ### Fixed
 
@@ -74,6 +80,9 @@ Found by running those macros in both Excel and MacroPress and comparing every a
   and `OR` count text and logical values written in the formula and pass over those read from cells, and an argument
   left empty is a 0. A formula that wants one value and is given a range takes the cell in its own row or column, and
   `INDEX` with a 0 gives a whole row or column. `WorksheetFunction.Sum`, `Max` and `Min` take values the same way.
+- **Lookups**: `INDEX` works an expression it is given out whole in any formula, as Excel does
+  (`INDEX((A1:A9=1)*B1:B9, 0)` used to take one row of it); `WorksheetFunction.XLookup` hands back a `Range` and
+  takes its match and search modes.
 - **Calculation**: under manual calculation a formula keeps its value until something calculates, and one entered then
   is calculated once from what cells show; a workbook saved in manual mode opens in it. A cell filled by an array
   formula entered with Ctrl+Shift+Enter is no longer read with a value its formula has outgrown.

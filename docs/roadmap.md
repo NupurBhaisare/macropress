@@ -18,7 +18,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
 | 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font` (1.1, 1.3, 1.4 and 1.5 are done) | nothing | small, five pieces |
-| 2 | [Worksheet functions](#2-worksheet-functions) | `VLOOKUP(…, TRUE)`, `Application.Match`, `INDIRECT`, `TEXT` (2.1 and 2.2 are done) | nothing | large, ships in slices |
+| 2 | [Worksheet functions](#2-worksheet-functions) | `Application.Match`, `ROUNDUP`, `EOMONTH`, `FILTER`, `LET` (2.1 to 2.3 are done) | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
 | 5 | [Appearance](#5-appearance) | `Font`, `Interior`, `Borders`, `ColumnWidth`, `Merge` | 1, 4 | large |
@@ -158,8 +158,8 @@ and `"05"` all find the number 5 and the text `"05"`, `" 5"`, `"5.0"`; `"<>5"` f
 `"1234567890123456"` and `"1234567890123457"` are found by either, as Excel finds them. `"TRUE"` finds `TRUE`, never
 the text or 1; `"#N/A"` finds the error; a blank criterion is 0; `"="` finds blank cells, `""` empty text as well.
 Sums are not rounded to 0 as `SUM`'s are. A range where a criterion is wanted gives the formula's own row (and
-`#VALUE!` outside it, which finds only `#VALUE!` cells). Left open: text that reads as a date or money, in a criterion or in a
-cell a number is looked for in, which is read by regional settings.
+`#VALUE!` outside it, which finds only `#VALUE!` cells). Left open: text that reads as a date or money, in a
+criterion or in a cell a number is looked for in, which is read by regional settings.
 
 - A criterion is a value, or an operator and a value: `">5"`, `"<>"` (not blank), `"="` (blank), wildcards
   `* ? ~` for text, no regard to case.
@@ -175,6 +175,15 @@ cell a number is looked for in, which is read by regional settings.
 - Does the total go to 0 where a `SUM` would (the sum that all but cancels)? **Probe**.
 
 ### 2.3 Lookups
+
+**Status**: done, recorded from Excel first, in formulas and from `WorksheetFunction`. What it settled: an
+approximate match finds the last of equal values, and passes over values of other kinds; `MATCH` with -1 finds the
+first equal value, else the last above; a binary `XLOOKUP` the first equal value (the last, descending). Numbers are
+matched in full, not to 15 digits. `INDEX`, `LOOKUP`, `XLOOKUP` and `XMATCH` work an expression out whole without
+Ctrl+Shift+Enter, `MATCH` and `VLOOKUP` do not; `CHOOSE({1,2}, …)` puts ranges side by side. VBA hands a `Date` to
+a lookup as text. Left open: unsorted data, where Excel's answer is wherever its search lands (answered only where it
+cannot land elsewhere); which of several equal values a binary search for the next value finds; `INDIRECT` to
+another workbook, which may or may not be open.
 
 - **Exact match has wildcards** in `VLOOKUP` and `MATCH` when the value looked up is text (`XLOOKUP` only when
   asked). Today's compare plainly, so `VLOOKUP("a*", …, FALSE)` may already differ from Excel: check that first.
@@ -216,6 +225,21 @@ cell a number is looked for in, which is read by regional settings.
   `Application.Transpose` has limits on size and on the length of text on Windows: **probe** on the Mac.
 - `WorksheetFunction.Round` is not VBA's `Round`.
 - `Evaluate` and `[…]` beyond a plain reference: a formula in text, read against the active sheet.
+
+### 2.6 Newer functions
+
+`FILTER`, `SEQUENCE`, `LET`, `LAMBDA` and its helpers (`MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL`, `MAKEARRAY`), and
+the functions that shape arrays (`TAKE`, `DROP`, `CHOOSECOLS`, `CHOOSEROWS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,
+`TEXTSPLIT`, `TEXTBEFORE`, `TEXTAFTER`). Workbooks made in Excel 365 lean on them. A formula using one is saved
+without a value today, for Excel to calculate, so a macro or an agent that reads it cannot see what it gives.
+
+- The file keeps them with prefixes: `_xlfn.`, `_xlfn._xlws.` (`FILTER`, as `SORT` already is), and `_xlpm.` before
+  each name `LET` and `LAMBDA` bind. Read and write all three.
+- `FILTER` that keeps nothing and has no `if_empty` is `#CALC!`. An `include` of another size than the array:
+  **probe**.
+- `LET` and `LAMBDA` names belong to the formula, and hide a defined name of the same name. A `LAMBDA` kept as a
+  defined name is called like a function and may call itself: how deep before Excel gives up, **probe**.
+- All of it is in Excel for Mac, so it can be recorded there.
 
 ## 3. Finding and collecting
 
@@ -307,6 +331,8 @@ One reader of format codes, used by `Range.Text`, filters, `Find`, the `TEXT` fu
 - **The view and the page**: frozen panes, zoom, gridlines, tab colour, `PageSetup` (the print area is a defined
   name). All of it is state in the file. `PrintOut`: refuse.
 - `ClearFormats`. And everything that moves cells must now carry their look: copy, fill, sort, insert, delete.
+- **A copy carries more than the look**: the source's data validation and conditional formats go with it, as in
+  Excel. Today a paste brings values, formulas and number formats, and the target keeps the rest of its own.
 - **Checking the writer**: besides probes that set and read back, have Excel open MacroPress's saved copy and read
   the same properties.
 
@@ -395,7 +421,9 @@ ever changed.
   result as a value. Keep refusing. If it is wanted: solve it exactly, and say in every report that the last digits
   are not Excel's. Solver, data tables and scenarios are of the same kind.
 - **Charts**: making or formatting one stays refused. Charts in the file are kept, and group 6 must keep their
-  ranges right or stop.
+  ranges right or stop. A chart also keeps, in the file, the numbers it last drew. Excel draws from the cells when it
+  opens the copy, but a preview outside Excel (a file browser, a web viewer) shows the old numbers: write them again
+  where a series reads cells that changed.
 - **UserForms and range pickers** (`Application.InputBox(Type:=8)`) could take answers as `MsgBox` does.
 - **Event procedures** stay as a note in the report. Running `Worksheet_Change` on every write is a decision of its
   own, since it changes results in workbooks that lean on it.

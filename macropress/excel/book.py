@@ -124,6 +124,7 @@ class Book(VBAObject):
         self._dirty_on, self._dirty_spills = {}, {}  # sheet -> its dirty formulas; its dirty dynamic arrays
         self._by_sheet, self._readers, self._always = {}, {}, set()
         self._evaluating = set()
+        self._storing = False  # a formula's own result is being stored (see cells_changed)
         self._spill_writer = None
         self._calculating = False
 
@@ -171,8 +172,8 @@ class Book(VBAObject):
 
     def _precedents(self, sheet, nodes, tree=None):
         """The rectangles a formula reads, from its ref and name nodes; one that is #REF! or #NAME? reads nothing.
-        With the formula's tree, also what SUMIF reads past its sum range; None where that is known only as it is
-        worked out."""
+        With the formula's tree, also what it reads past the references it names (SUMIF's sum range, A1:INDEX(...));
+        None where that is known only as it is worked out."""
         ev = self._evaluator(sheet)
         rects = []
         for node in nodes:
@@ -182,8 +183,8 @@ class Book(VBAObject):
                 pass  # a #REF! or #NAME? reference reads no cells
         if tree is None:
             return rects
-        resized = fx.resized_reads(tree, ev.rect_of)
-        return None if resized is None else rects + resized
+        beyond = fx.unnamed_reads(tree, ev.rect_of)
+        return None if beyond is None else rects + beyond
 
     def _named_precedents(self, sheet, text):
         """For a formula the evaluator cannot read: the rectangles its text names, or None when it can read cells it
@@ -295,7 +296,9 @@ class Book(VBAObject):
         todo = [(sheet, r1, c1, r2, c2)]
         while todo:
             s, a1, b1, a2, b2 = todo.pop()
-            hits = list(self._always)
+            # formulas that recalculate on every change (OFFSET, INDIRECT) or read cells no one can name: a change a
+            # macro makes reaches them, not one a formula's own result makes, which they read afresh when worked out
+            hits = [] if self._storing else list(self._always)
             if s in self._readers:
                 for key in self._readers[s].near(a1, b1, a2, b2):
                     if any(
@@ -384,7 +387,11 @@ class Book(VBAObject):
         finally:
             self._evaluating.discard(key)
         self._unmark(key)
-        self._store(key, info, result)
+        self._storing = True
+        try:
+            self._store(key, info, result)
+        finally:
+            self._storing = False
         if key in self.formula_index and key not in self.dirty:
             self._watch(key)
 

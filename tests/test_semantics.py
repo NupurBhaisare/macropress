@@ -660,6 +660,27 @@ class ExcelModel(Runner):
             ["3 126 12 80 1", "112 Error 2007 64 2", "180", "1 101", "1004 True"],
         )
 
+    def test_lookups_find_what_excel_finds(self):
+        body = (
+            "v = Array(10, 20, 20, 30, 40, 50)\nFor i = 1 To 6\nCells(i, 1).Value = v(i - 1)\nCells(i, 2).Value = Chr(96 + i)\nNext\n"
+            'Range("D1").Formula = "=VLOOKUP(20,A1:B6,2,TRUE)"\nRange("D2").Formula = "=MATCH(35,A1:A6)"\n'
+            'Range("D3").Formula = "=XLOOKUP(35,A1:A6,B1:B6,""-"",1)"\nRange("D4").Formula = "=SUM(A1:INDEX(A1:A6,3))"\n'
+            'Range("D5").Formula = "=SUM(OFFSET(A1,1,0,2,1))"\nRange("D6").Formula = "=INDIRECT(""B""&MATCH(30,A1:A6,0))"\n'
+            'Range("D7").Formula = "=VLOOKUP(""c"",CHOOSE({1,2},B1:B6,A1:A6),2,FALSE)"\n'
+            'Range("D8").Formula = "=MATCH(1,INDEX((A1:A6=20)*(B1:B6=""c""),0),0)"\n'
+            'Debug.Print Range("D1").Value, Range("D2").Value, Range("D3").Value, Range("D4").Value, Range("D5").Value\n'
+            'Debug.Print Range("D6").Value, Range("D7").Value, Range("D8").Value\n'
+            'Range("A2").Value = 25\nDebug.Print Range("D5").Value, Range("D4").Value\n'
+            'Debug.Print WorksheetFunction.Match(40, Range("A1:A6"), 0), TypeName(WorksheetFunction.Index(Range("A1:B6"), 2, 2))\n'
+            'On Error Resume Next\nRange("E1").Formula = "=OFFSET(5,1,1)"\nDebug.Print Err.Number'
+        )
+        # an approximate match finds the last of equal values; INDEX and CHOOSE take an expression whole, and with
+        # OFFSET and INDIRECT hand back cells, which a range can end on; all of them are kept current
+        self.assertEqual(self.prints(body), ["c 4 e 50 40", "d 20 3", "45 55", "5 Range", "1004"])
+        # over values not in order, where Excel's search lands is not known: the value is not guessed
+        with self.assertRaisesRegex(VBANotImplemented, "could not be calculated"):
+            self.prints('Range("A1").Formula = "=MATCH(35,{30,10,50})"\nx = Range("A1").Value')
+
     def test_a_formula_that_wants_one_value_takes_its_own_row_or_column_of_a_range(self):
         body = (
             'Range("F1").Value = 1\nRange("F2").Value = 2\nRange("F3").Value = 3\n'

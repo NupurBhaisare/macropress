@@ -30,7 +30,7 @@ _TOKEN = re.compile(
 |(?P<num>\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?)
 |(?P<func>[A-Za-z_][\w.]*(?=\())
 |(?P<name>[A-Za-z_][\w.]*(?:\[[^\]]*\])*)
-|(?P<op><>|<=|>=|[-+*/^&=<>(),%{};@])
+|(?P<op><>|<=|>=|[-+*/^&=<>(),%{};@:])
 """,
     re.VERBOSE,
 )
@@ -132,6 +132,8 @@ def _children(node):
         return node[2]
     if node[0] == "bin":
         return [node[2], node[3]]
+    if node[0] == "range":
+        return [node[1], node[2]]
     if node[0] in ("neg", "pct", "paren", "at"):
         return [node[1]]
     return []
@@ -201,6 +203,8 @@ def _implicit(tree, spans, size, top="top"):
     def many(node):
         """Whether a node may stand for several values once its ranges in value places are taken as one."""
         kind = node[0]
+        if kind == "range":
+            return True
         if kind in ("ref", "name"):
             return size(node) != (1, 1)
         if kind == "array":
@@ -220,7 +224,9 @@ def _implicit(tree, spans, size, top="top"):
 
     def _func_many(node):
         name, args = node[1], node[2]
-        if name == "INDEX":  # a row or column of 0, or left empty, takes all of them
+        if name == "INDEX":  # a row or column of 0, or left empty, takes all of them; an array worked out may be any
+            if args and args[0][0] not in ("ref", "name"):
+                return True
             numbers = [a for a in args[1:3] if a[0] != "missing"]
             if any(a[0] != "num" for a in numbers):
                 raise _Unsure
@@ -234,10 +240,25 @@ def _implicit(tree, spans, size, top="top"):
                 raise _Unsure
             rows, cols = size(args[0])
             return (rows if name == "ROW" else cols) > 1
-        if name == "XLOOKUP":
+        if name in ("XLOOKUP", "LOOKUP"):
             if _arrayish(args[0]):
                 raise _Unsure
             return False
+        if name == "CHOOSE":  # an index from a range is one value; an array constant picks many
+            return any(many(a) for a in args[1:]) or bool(args and args[0][0] == "array" and many(args[0]))
+        if name == "INDIRECT":
+            return True
+        if name == "OFFSET":  # as tall and wide as the reference unless told, and a size given is taken as many
+            if not args or args[0][0] not in ("ref", "name"):
+                raise _Unsure
+            given = [a for a in args[3:5] if a[0] != "missing"]
+            if any(a[0] != "num" for a in given):
+                raise _Unsure
+            if any(abs(a[1]) != 1 for a in given):
+                return True
+            if given:
+                raise _Unsure
+            return size(args[0]) != (1, 1)
         if name in _MANY_RESULTS:
             raise _Unsure
         return False
@@ -246,8 +267,8 @@ def _implicit(tree, spans, size, top="top"):
         """place: top (what the formula ends on), value (a function's argument that wants one value), operand (an
         operator's), ref (taken whole), array (worked out as an array)."""
         kind = node[0]
-        if kind in ("ref", "name"):
-            if place in ("top", "value", "operand") and size(node) != (1, 1):
+        if kind in ("ref", "name", "range"):
+            if place in ("top", "value", "operand") and (kind == "range" or size(node) != (1, 1)):
                 sites.append(node)
             return
         if kind == "array":  # an array stays one, but one a formula ends on is shown with @
@@ -270,7 +291,7 @@ def _implicit(tree, spans, size, top="top"):
         if kind == "func":
             name, args = node[1], node[2]
             if place in ("top", "value", "operand") and _func_many(node):
-                if place == "value" or name not in ("INDEX", "IF", "ROW", "COLUMN"):
+                if place == "value" or name not in ("INDEX", "IF", "ROW", "COLUMN", "CHOOSE", "OFFSET", "INDIRECT"):
                     raise _Unsure
                 sites.append(node)
                 place = "ref"  # under the @, what it hands back is taken whole
@@ -283,6 +304,16 @@ def _implicit(tree, spans, size, top="top"):
                 for a in args[1:3]:
                     walk(a, place if place in ("ref", "array") else "ref")
                 return
+            if name == "CHOOSE":  # an index that is an array constant picks value by value, from values taken whole
+                if args and args[0][0] == "array":
+                    for a in args[1:]:
+                        walk(a, "array")
+                    return
+                if args:
+                    walk(args[0], "value")
+                for a in args[1:]:
+                    walk(a, place if place in ("ref", "array") else "ref")
+                return
             if name not in FUNCTIONS and name not in EXCEL_FUNCTIONS:
                 raise _Unsure
             takes = TAKES.get(name)
@@ -290,7 +321,7 @@ def _implicit(tree, spans, size, top="top"):
                 letter = takes[min(i, len(takes) - 1)] if takes else None
                 if letter is None and a[0] in ("ref", "name") and size(a) != (1, 1) and name not in FUNCTIONS:
                     raise _Unsure  # how a function we do not model takes a range is not known
-                walk(a, "value" if letter == "v" else "ref")
+                walk(a, "value" if letter == "v" else "array" if letter == "a" else "ref")
             return
 
     walk(tree, top)
@@ -402,8 +433,9 @@ def tokenize(text, offsets=None):
 class Parser:
     """Reads a formula into nodes: ("num", x), ("str", s), ("bool", b), ("err", e), ("ref", text), ("name", text),
     ("func", NAME, [args]), ("array", [[values]]), ("bin", op, a, b), ("neg", a), ("pct", a), ("paren", a),
-    ("at", a) for @ (one value of what follows), ("missing",) for an argument left empty. `spans` keeps where each
-    node starts and ends in the text (after the =)."""
+    ("at", a) for @ (one value of what follows), ("range", a, b) for a:b between references that are not both cells
+    (A1:INDEX(A:A,5)), ("missing",) for an argument left empty. `spans` keeps where each node starts and ends in the
+    text (after the =)."""
 
     def __init__(self, text):
         self.text = text
@@ -461,8 +493,14 @@ class Parser:
         return node
 
     def primary(self):
+        """A value, and the range from it to another reference after a colon, which binds before any operator."""
         first = self.i
-        return self._mark(self._primary(), first)
+        node = self._mark(self._primary(), first)
+        while self.peek() == ("op", ":"):
+            self.take()
+            start = self.i
+            node = self._mark(("range", node, self._mark(self._primary(), start)), first)
+        return node
 
     def _array(self):
         """An array constant, after its {: rows split by ;, values by , and every row as long as the first. Only
@@ -559,13 +597,8 @@ def function_names(node, out=None):
     out = set() if out is None else out
     if node[0] == "func":
         out.add(node[1])
-        for a in node[2]:
-            function_names(a, out)
-    elif node[0] == "bin":
-        function_names(node[2], out)
-        function_names(node[3], out)
-    elif node[0] in ("neg", "pct", "paren", "at"):
-        function_names(node[1], out)
+    for child in _children(node):
+        function_names(child, out)
     return out
 
 
@@ -574,14 +607,8 @@ def references(node, out=None):
     out = [] if out is None else out
     if node[0] in ("ref", "name"):
         out.append(node)
-    elif node[0] == "func":
-        for a in node[2]:
-            references(a, out)
-    elif node[0] == "bin":
-        references(node[2], out)
-        references(node[3], out)
-    elif node[0] in ("neg", "pct", "paren", "at"):
-        references(node[1], out)
+    for child in _children(node):
+        references(child, out)
     return out
 
 
@@ -907,11 +934,16 @@ def _each(fn, operands):
 
     def one(i, j):
         try:
-            return fn(*[at(o, i, j) for o in operands])
+            v = fn(*[at(o, i, j) for o in operands])
         except _Err as e:
             return e.err
         except ZeroDivisionError:
             return XLError("#DIV/0!")
+        if isinstance(v, Array):  # cells handed back for each value: one cell is its value
+            if v.extent != (1, 1):
+                raise VBANotImplemented("a function handing back a range for each value of an array")
+            return v.cell(0, 0)
+        return v
 
     start = 0  # from this row on, every row is alike
     for a in arrays:
@@ -958,9 +990,15 @@ class Evaluator:
         return self.cell
 
     def rect_of(self, node):
-        """(sheet, r1, c1, r2, c2) for a ref or name node."""
+        """(sheet, r1, c1, r2, c2) for a ref or name node, or a range between two references: the box around both,
+        on one sheet (#VALUE! across two)."""
         from .excel import parse_area
 
+        if node[0] == "range":
+            a, b = self._cells_of(node[1]), self._cells_of(node[2])
+            if a[0] is not b[0]:
+                raise _Err(XLError("#VALUE!"))
+            return (a[0], min(a[1], b[1]), min(a[2], b[2]), max(a[3], b[3]), max(a[4], b[4]))
         if node[0] == "ref":
             sname, area = ref_parts(node[1])
             sheet = self.book.find_sheet(sname) if sname else self.sheet
@@ -980,6 +1018,18 @@ class Evaluator:
             raise _Err(XLError("#NAME?"))
         node2 = ("ref", ref.lstrip("="))
         return self.rect_of(node2)
+
+    def _cells_of(self, node):
+        """The cells one side of a range names: a reference, or what a function hands back as cells (#VALUE! for a
+        value)."""
+        while node[0] == "paren":
+            node = node[1]
+        if node[0] in ("ref", "name", "range"):
+            return self.rect_of(node)
+        v = self.ev(node)
+        if isinstance(v, Array) and v.rect is not None:
+            return v.rect
+        raise _Err(XLError("#VALUE!"))
 
     def range_values(self, rect):
         sheet, r1, c1, r2, c2 = rect
@@ -1004,7 +1054,7 @@ class Evaluator:
             return None
         if kind == "array":
             return Array([list(row) for row in node[1]])
-        if kind in ("ref", "name"):
+        if kind in ("ref", "name", "range"):
             rect = self.rect_of(node)
             sheet, r1, c1, r2, c2 = rect
             if (r1, c1) == (r2, c2):
@@ -1032,12 +1082,24 @@ class Evaluator:
         one cell too (IF(c, A1) is the cell A1, which SUM reads as a cell)."""
         while node[0] == "paren":
             node = node[1]
-        if node[0] in ("ref", "name"):
-            rect = self.rect_of(node)
-            if rect[1:3] == rect[3:5]:
-                return Array([[self.read(rect[0], rect[1], rect[2])]], (1, 1), rect)
-            return self.range_values(rect)
+        if node[0] in ("ref", "name", "range"):
+            return self.cells(self.rect_of(node))
         return self.ev(node)
+
+    def cells(self, rect):
+        """The cells of a rectangle as a function hands them back: read, and still the cells they are."""
+        if rect[1:3] == rect[3:5]:
+            return Array([[self.read(rect[0], rect[1], rect[2])]], (1, 1), rect)
+        return self.range_values(rect)
+
+    def taken(self, node):
+        """An argument a function takes whole whatever the formula (INDEX's array, LOOKUP's and XLOOKUP's): the cells
+        a reference names, kept as cells; anything else worked out as an array."""
+        while node[0] == "paren":
+            node = node[1]
+        if node[0] in ("ref", "name", "range"):
+            return self.keep(node)
+        return self.array(self.whole(node))
 
     def one(self, v):
         """One value of what was given: a range gives the cell in the formula's own row (of a column) or column (of a
@@ -1118,8 +1180,10 @@ class Evaluator:
 
 # How each function takes its arguments, a letter each, the last for the rest: v, one value (in a formula that is
 # not a dynamic array, a range gives the formula's own row or column of it; an array, and a range in a dynamic array,
-# is gone through value by value, the result an array); r, a reference or an array, taken whole. A function not here
-# takes all as r; IF and SUMPRODUCT take theirs themselves.
+# is gone through value by value, the result an array); r, a reference or an array, taken whole; a, the same, and an
+# expression there is worked out as an array whatever the formula (INDEX((A1:A9=1)*B1:B9, 0) needs no Ctrl+Shift+Enter,
+# MATCH(TRUE, A1:A9>1, 0) does). A function not here takes all as r; IF, CHOOSE and SUMPRODUCT take theirs
+# themselves.
 TAKES = {
     "ABS": "v",
     "INT": "v",
@@ -1138,9 +1202,14 @@ TAKES = {
     "IFERROR": "v",
     "CONCATENATE": "v",
     "MATCH": "vrv",
-    "VLOOKUP": "vrv",
-    "XLOOKUP": "vrrv",
-    "INDEX": "rv",
+    "VLOOKUP": "vrvv",
+    "HLOOKUP": "vrvv",
+    "XLOOKUP": "vaarvv",
+    "XMATCH": "vavv",
+    "LOOKUP": "vaa",
+    "INDEX": "avvv",
+    "OFFSET": "rvvvv",
+    "INDIRECT": "vv",
     "COUNTIF": "rv",
     "SUMIF": "rvr",
     "AVERAGEIF": "rvr",
@@ -1409,69 +1478,382 @@ def f_today(ev, args):
     return float(date_to_serial(dt.datetime(now.year, now.month, now.day)))
 
 
-def _line(arr):
-    """A row or column's values in order, for a lookup: of the alike rows past an array's data, the first (where
-    a match there is first found)."""
-    values = [x for row in arr.rows for x in row]
-    if arr.tail is not None and len(arr.rows) < arr.extent[0] and arr.extent[1] == 1:
-        values.append(arr.tail[0])
-    return values
+# ---------------------------------------------------------------------------
+# Lookups
+# ---------------------------------------------------------------------------
 
 
-def _match_index(values, key):
-    for i, v in enumerate(values):
-        if v is not None and not isinstance(v, XLError) and compare(v, key, exact=True) == 0:  # no error matches
-            return i
+def _runs(arr):
+    """A row or column's values for a lookup, as runs (first position, last position, value), 1-based: one for each
+    value of its data, and one for the alike rows past it; blank cells, which no lookup finds, left out. None for an
+    array of more than one row and column."""
+    rows, cols = arr.extent
+    if rows != 1 and cols != 1:
+        return None
+    if cols == 1:
+        held = [row[0] if row else None for row in arr.rows[:rows]]
+        tail = arr.tail[0] if arr.tail else None
+    else:
+        held, tail = list(arr.rows[0][:cols]) if arr.rows else [], None
+    runs = [(i, i, v) for i, v in enumerate(held, 1) if v is not None]
+    if tail is not None and len(held) < max(rows, cols):
+        runs.append((len(held) + 1, max(rows, cols), tail))
+    return runs
+
+
+def _key(v, limit=False):
+    """The value looked up. An error is the result; with limit (VLOOKUP, HLOOKUP, MATCH), text longer than 255
+    characters is #VALUE!."""
+    v = single(v)
+    if isinstance(v, XLError):
+        raise _Err(v)
+    if isinstance(v, dt.datetime):
+        return date_to_serial(v)
+    if limit and isinstance(v, str) and len(v) > 255:
+        raise _Err(XLError("#VALUE!"))
+    return v
+
+
+def _of_kind(runs, key):
+    """The runs whose values are of the key's kind (a number, text, TRUE or FALSE), with their values as compared."""
+    kind = _kind(key)[0]
+    return [(a, b, x) for a, b, v in runs for k, x in [_kind(v)] if k == kind]
+
+
+def _cmp(x, key):
+    return compare(x, key, exact=True)  # a lookup compares numbers in full, not to 15 digits
+
+
+def _in_order(runs, descending=False):
+    return all(
+        (_cmp(a[2], b[2]) >= 0) if descending else (_cmp(a[2], b[2]) <= 0) for a, b in zip(runs, runs[1:], strict=False)
+    )
+
+
+def _unordered(what):
+    return VBANotImplemented(f"{what} over values not in order: Excel's answer is wherever its halving search lands")
+
+
+def _exact(runs, key, wildcards, reverse=False):
+    """The position of the first value (the last, reverse) equal to the key: numbers in full, text ignoring case,
+    with the wildcards * ? ~ where the lookup takes them, TRUE and FALSE themselves. A number never finds text that
+    reads as one, and nothing finds an error."""
+    pattern = None
+    if wildcards and isinstance(key, str):
+        from .excel.filters import wildcard_regex  # noqa: PLC0415 - the excel package imports this module
+
+        pattern = wildcard_regex(key)
+    found = _of_kind(runs, key)
+    for first, last, x in reversed(found) if reverse else found:
+        if pattern is not None:
+            if pattern.fullmatch(x) is not None:
+                return last if reverse else first
+        elif _cmp(x, key) == 0:
+            return last if reverse else first
     return None
 
 
-def f_match(ev, args):
-    key = scalar(ev.ev(args[0]))
-    arr = ev.array(ev.ev(args[1]))
-    mode = num(ev.arg(args, 2, 1.0))
-    if mode != 0:
-        raise VBANotImplemented("MATCH with an approximate match type")
-    values = _line(arr)
-    i = _match_index(values, key)
-    if i is None:
+def _ascending(runs, key):
+    """An approximate match (MATCH 1, VLOOKUP TRUE, LOOKUP): the last value at or below the key, last of equal ones,
+    among values of its kind, others passed over. Over values not in ascending order, answered only where Excel's
+    search cannot land elsewhere: the key at or above them all (the last) or below them all (none)."""
+    found = _of_kind(runs, key)
+    below = [r for r in found if _cmp(r[2], key) <= 0]
+    if len(below) in (0, len(found)) or _in_order(found):
+        return below[-1][1] if below else None
+    raise _unordered("an approximate match")
+
+
+def _descending(runs, key):
+    """MATCH -1, over values in descending order: the first value equal to the key, else the last above it."""
+    found = _of_kind(runs, key)
+    above = [r for r in found if _cmp(r[2], key) > 0]
+    if len(above) == len(found):
+        return found[-1][1] if found else None
+    if not above and not any(_cmp(r[2], key) == 0 for r in found):
+        return None
+    if not _in_order(found, descending=True):
+        raise _unordered("a match of type -1")
+    equal = [r for r in found if _cmp(r[2], key) == 0]
+    return equal[0][0] if equal else above[-1][1]
+
+
+def _single_place(runs, what):
+    """The one position runs of a value hold; refused where it is held in several, and which Excel's search lands on
+    is not known."""
+    if len(runs) != 1 or runs[0][0] != runs[0][1]:
+        raise VBANotImplemented(f"{what} where the value found is there more than once")
+    return runs[0][0]
+
+
+def _nearest(runs, key, mode, reverse):
+    """XLOOKUP's and XMATCH's exact match or, by mode, the next smaller (-1) or next larger (1) value, searching
+    first to last (last to first, reverse); of equal ones the first the search meets."""
+    found = _of_kind(runs, key)
+    if len(found) != len(runs):
+        raise VBANotImplemented("a next smaller or larger value looked for among values of other kinds")
+    hit = _exact(runs, key, False, reverse)
+    if hit is not None:
+        return hit
+    side = [r for r in found if (_cmp(r[2], key) < 0 if mode == -1 else _cmp(r[2], key) > 0)]
+    if not side:
+        return None
+    best = side[0][2]
+    for r in side:
+        if (_cmp(r[2], best) > 0) if mode == -1 else (_cmp(r[2], best) < 0):
+            best = r[2]
+    ties = [r for r in side if _cmp(r[2], best) == 0]
+    return ties[-1][1] if reverse else ties[0][0]
+
+
+def _halving(runs, key, mode, descending):
+    """XLOOKUP's and XMATCH's binary search (search mode 2, or -2 over values in descending order). Of equal values
+    the exact match finds the first (the last, descending); the next smaller ascending is the last of its equals,
+    the next larger the first. Where Excel's choice among equal values is not known, refused."""
+    found = _of_kind(runs, key)
+    if not _in_order(found, descending):
+        raise _unordered("a binary search")
+    equal = [r for r in found if _cmp(r[2], key) == 0]
+    if mode == 0 or (equal and mode in (-1, 1)):
+        if not equal:
+            return None
+        if mode == 0:
+            return equal[-1][1] if descending else equal[0][0]
+        return _single_place(equal, "a binary search for the exact or the next value")
+    side = [r for r in found if (_cmp(r[2], key) < 0 if mode == -1 else _cmp(r[2], key) > 0)]
+    if not side:
+        return None
+    if descending:  # in descending order the next larger value is the last of those above, the next smaller the first
+        near = side[-1] if mode == 1 else side[0]
+        return _single_place([r for r in side if _cmp(r[2], near[2]) == 0], "a binary search for the next value")
+    return side[-1][1] if mode == -1 else side[0][0]
+
+
+def _looked_up(runs, key, how):
+    """how(runs, key), the position found or None. A blank looked up is read as 0 by some accounts and finds nothing
+    by others: answered only where the two agree."""
+    if key is None:
+        if how(runs, 0.0) is not None:
+            raise VBANotImplemented("a blank cell looked up, where a 0 would be found")
+        return None
+    return how(runs, key)
+
+
+def _column_of(arr, j):
+    """Column j of an array, as an array of one column (a range read keeps its alike rows past the data)."""
+    return Array([row[j : j + 1] for row in arr.rows], (arr.extent[0], 1), None, arr.tail and arr.tail[j : j + 1])
+
+
+def _table_lookup(ev, args, across):
+    """VLOOKUP and HLOOKUP: the key looked for in the table's first column (first row, across), and the value in the
+    column (row) asked for. A column of 0 or less is #VALUE!, past the table #REF!. An approximate match unless the
+    last argument says not, or is there but empty."""
+    key = _key(ev.ev(args[0]), limit=True)
+    table = ev.array(ev.ev(args[1]))
+    index = int(num(ev.ev(args[2])))
+    approximate = ev.arg(args, 3, True)
+    if index < 1:
+        raise _Err(XLError("#VALUE!"))
+    if index > table.extent[0 if across else 1]:
+        raise _Err(XLError("#REF!"))
+    first = Array(table.rows[:1], (1, table.extent[1])) if across else _column_of(table, 0)
+    exact = approximate is None or not truth(approximate)
+    found = _looked_up(_runs(first), key, (lambda runs, k: _exact(runs, k, True)) if exact else _ascending)
+    if found is None:
         raise _Err(XLError("#N/A"))
-    return float(i + 1)
+    return table.cell(index - 1, found - 1) if across else table.cell(found - 1, index - 1)
 
 
 def f_vlookup(ev, args):
-    key = scalar(ev.ev(args[0]))
-    arr = ev.array(ev.ev(args[1]))
-    col = int(num(ev.ev(args[2])))
-    approx = ev.arg(args, 3, True)  # left out: approximate; empty, VLOOKUP(x, r, 2, ): exact
-    if approx is not None and truth(approx):
-        raise VBANotImplemented("VLOOKUP with an approximate match")
-    if col < 1:
-        raise _Err(XLError("#VALUE!"))
-    if col > arr.extent[1]:
-        raise _Err(XLError("#REF!"))
-    i = _match_index(
-        _line(Array([row[:1] for row in arr.rows], (arr.extent[0], 1), None, arr.tail and arr.tail[:1])), key
-    )
-    if i is None:
+    return _table_lookup(ev, args, across=False)
+
+
+def f_hlookup(ev, args):
+    return _table_lookup(ev, args, across=True)
+
+
+def f_match(ev, args):
+    """MATCH(key, array, type): the key's position in one row or column (#N/A in a block). Type 1 (left out) is an
+    approximate match over ascending values, 0 exact with wildcards, -1 over descending ones; any other positive or
+    negative number counts as 1 or -1."""
+    key = _key(ev.ev(args[0]), limit=True)
+    runs = _runs(ev.array(ev.ev(args[1])))
+    kind = num(ev.arg(args, 2, 1.0))
+    if runs is None:
         raise _Err(XLError("#N/A"))
-    return arr.cell(i, col - 1)
+    how = _ascending if kind > 0 else _descending if kind < 0 else (lambda runs, k: _exact(runs, k, True))
+    found = _looked_up(runs, key, how)
+    if found is None:
+        raise _Err(XLError("#N/A"))
+    return float(found)
+
+
+def _modes(ev, args, i):
+    """XLOOKUP's and XMATCH's match mode and search mode, from argument i: anything else is #VALUE!."""
+    mode = num(ev.arg(args, i, 0.0, blank=0.0))
+    search = num(ev.arg(args, i + 1, 1.0, blank=1.0))
+    if mode not in (0, -1, 1, 2) or search not in (1, -1, 2, -2):
+        raise _Err(XLError("#VALUE!"))
+    return int(mode), int(search)
+
+
+def _searched(runs, key, mode, search):
+    if search in (2, -2):
+        if mode == 2:
+            raise VBANotImplemented("a binary search with wildcards")
+        return _halving(runs, key, mode, search == -2)
+    if mode in (0, 2):
+        return _exact(runs, key, mode == 2, search == -1)
+    return _nearest(runs, key, mode, search == -1)
 
 
 def f_xlookup(ev, args):
-    key = scalar(ev.ev(args[0]))
-    look = ev.array(ev.ev(args[1]))
-    ret = ev.array(ev.ev(args[2]))
-    if len(args) > 4 and args[4][0] != "missing" and num(ev.ev(args[4])) != 0:
-        raise VBANotImplemented("XLOOKUP with a match mode")
-    if len(args) > 5 and args[5][0] != "missing" and num(ev.ev(args[5])) != 1:
-        raise VBANotImplemented("XLOOKUP with a search mode")
-    i = _match_index(_line(look), key)
-    if i is None:
+    """XLOOKUP(key, look, give, [if not found], [match mode], [search mode]): the key found in a row or column, and
+    the row or column of give in its place, as cells. Give of another length than look is #VALUE!."""
+    key = _key(ev.ev(args[0]))
+    look, give = ev.taken(args[1]), ev.taken(args[2])
+    mode, search = _modes(ev, args, 4)
+    runs = _runs(look)
+    by_row = look.extent[1] == 1 and (look.extent[0] != 1 or give.extent[0] == 1)
+    if runs is None or (give.extent[0] if by_row else give.extent[1]) != max(look.extent):
+        raise _Err(XLError("#VALUE!"))
+    found = _looked_up(runs, key, lambda runs, k: _searched(runs, k, mode, search))
+    if found is None:
         if len(args) > 3 and args[3][0] != "missing":
             return ev.ev(args[3])
         raise _Err(XLError("#N/A"))
-    r, c = (i, 0) if look.extent[1] == 1 else (0, i)
-    return _cell_of(ret, r, c)
+    return _slice(give, found - 1, by_row)
+
+
+def _slice(arr, i, by_row):
+    """Row i of an array (column i, by_row False), still the cells it was where it is a range; one cell, the cell."""
+    rows, cols = arr.extent
+    if by_row and cols == 1:
+        return _cell_of(arr, i, 0)
+    if not by_row and rows == 1:
+        return _cell_of(arr, 0, i)
+    if by_row:
+        rect = arr.rect and (arr.rect[0], arr.rect[1] + i, arr.rect[2], arr.rect[1] + i, arr.rect[4])
+        return Array([[arr.cell(i, j) for j in range(cols)]], (1, cols), rect)
+    rect = arr.rect and (arr.rect[0], arr.rect[1], arr.rect[2] + i, arr.rect[3], arr.rect[2] + i)
+    tail = arr.tail and arr.tail[i : i + 1]
+    return Array([[row[i] if i < len(row) else None] for row in arr.rows], (rows, 1), rect, tail)
+
+
+def f_xmatch(ev, args):
+    """XMATCH(key, look, [match mode], [search mode]): the key's position in a row or column (#VALUE! in a block)."""
+    key = _key(ev.ev(args[0]))
+    runs = _runs(ev.taken(args[1]))
+    mode, search = _modes(ev, args, 2)
+    if runs is None:
+        raise _Err(XLError("#VALUE!"))
+    found = _looked_up(runs, key, lambda runs, k: _searched(runs, k, mode, search))
+    if found is None:
+        raise _Err(XLError("#N/A"))
+    return float(found)
+
+
+def f_lookup(ev, args):
+    """LOOKUP(key, look, [give]): an approximate match, always. With give, the value in its place there; without,
+    look is a block searched along its first row when wider than tall (else its first column), giving its last row
+    (last column)."""
+    key = _key(ev.ev(args[0]))
+    if isinstance(key, str) and len(key) > 255:
+        raise VBANotImplemented("LOOKUP of text longer than 255 characters")
+    look = ev.taken(args[1])
+    rows, cols = look.extent
+    if len(args) > 2 and args[2][0] != "missing":
+        give = ev.taken(args[2])
+        runs = _runs(look)
+        if runs is None or _runs(give) is None:
+            raise VBANotImplemented("LOOKUP in a block given a result vector")
+        found = _looked_up(runs, key, _ascending)
+        if found is not None and found > max(give.extent):
+            raise VBANotImplemented("LOOKUP past the end of its result vector")
+        if found is None:
+            raise _Err(XLError("#N/A"))
+        return give.cell(found - 1, 0) if give.extent[1] == 1 else give.cell(0, found - 1)
+    across = cols > rows
+    first = Array(look.rows[:1], (1, cols)) if across else _column_of(look, 0)
+    found = _looked_up(_runs(first), key, _ascending)
+    if found is None:
+        raise _Err(XLError("#N/A"))
+    return look.cell(rows - 1, found - 1) if across else look.cell(found - 1, cols - 1)
+
+
+def f_choose(ev, args):
+    """CHOOSE(index, value, ...): the value the index (a whole number, cut toward 0) picks, the cells themselves
+    where it is a reference; outside 1 to the number of values, #VALUE!. An index that is an array picks value by
+    value, the values worked out whole: CHOOSE({1,2}, B1:B9, A1:A9) is the two columns side by side."""
+    index, values = ev.operand(args[0]), args[1:]
+
+    def pick(i, *given):
+        k = num(i)
+        if not 1 <= k < len(given) + 1:
+            raise _Err(XLError("#VALUE!"))
+        return given[int(k) - 1]
+
+    if _many(index):
+        return _each(pick, [index, *[ev.whole(a) if a[0] != "missing" else None for a in values]])
+    chosen = pick(single(index), *values)
+    return None if chosen[0] == "missing" else ev.keep(chosen)
+
+
+def f_offset(ev, args):
+    """OFFSET(reference, rows, columns, [height], [width]): the cells that many rows down and columns across (cut
+    toward 0), as tall and wide as asked or as the reference; a negative height or width reaches up or left. Of no
+    height or width, or off the sheet, #REF!."""
+    base = ev.keep(args[0])
+    if not isinstance(base, Array) or base.rect is None:
+        raise _Err(XLError("#VALUE!"))
+    sheet, r1, c1, r2, c2 = base.rect
+
+    def whole(i, default):
+        x = num(ev.arg(args, i, default, blank=default))
+        if x < 0 and x != int(x):
+            raise VBANotImplemented("OFFSET by a negative number that is not whole")
+        return int(x)
+
+    rows, cols = whole(1, 0.0), whole(2, 0.0)
+    height, width = whole(3, float(r2 - r1 + 1)), whole(4, float(c2 - c1 + 1))
+    if height == 0 or width == 0:
+        raise _Err(XLError("#REF!"))
+    top, left = r1 + rows, c1 + cols
+    t1, t2 = (top, top + height - 1) if height > 0 else (top + height + 1, top)
+    u1, u2 = (left, left + width - 1) if width > 0 else (left + width + 1, left)
+    if t1 < 1 or u1 < 1 or t2 > MAX_ROW or u2 > MAX_COL:
+        raise _Err(XLError("#REF!"))
+    return ev.cells((sheet, t1, u1, t2, u2))
+
+
+def f_indirect(ev, args):
+    """INDIRECT(text, [a1]): the cells text names, A1 style or (a1 FALSE) R1C1 style from the formula's own cell, or
+    a defined name; text that names none is #REF!. Another workbook's cells stop the run: whether Excel has it open
+    is not known."""
+    from .excel import parse_area  # noqa: PLC0415 - the excel package imports this module
+    from .excel.addresses import R1C1Formula  # noqa: PLC0415
+
+    name = text(ev.arg(args, 0, ""))
+    a1 = ev.arg(args, 1, True)  # an empty argument is FALSE, as in the older functions
+    if name.lstrip("'").startswith("["):
+        raise VBANotImplemented(f"INDIRECT({name!r}): another workbook's cells")
+    if a1 is None or not truth(a1):
+        try:
+            name = R1C1Formula(name).a1(*ev.here())
+        except VBANotImplemented:
+            raise _Err(XLError("#REF!")) from None
+    m = _TOKEN.match(name)
+    if not name or m is None or m.end() != len(name) or m.lastgroup not in (*REFERENCE_KINDS, "name"):
+        raise _Err(XLError("#REF!"))
+    if m.lastgroup == "name":
+        try:
+            return ev.keep(("name", name))
+        except _Err:
+            raise _Err(XLError("#REF!")) from None
+    area = parse_area(ref_parts(name)[1].replace("$", ""))
+    if area is None or area[2] > MAX_ROW or area[3] > MAX_COL:
+        raise _Err(XLError("#REF!"))
+    return ev.keep(("ref", name))
 
 
 def _cell_of(arr, i, j):
@@ -1486,7 +1868,7 @@ def _cell_of(arr, i, j):
 def f_index(ev, args):
     """INDEX(array, row, column). One number picks along a single row or column, and is #REF! for a block of both;
     0 for the row or the column takes all of them: a whole column or row of the array, still the cells it was."""
-    arr = ev.array(ev.ev(args[0]))
+    arr = ev.taken(args[0])
     rows, cols = arr.extent
     r = int(num(ev.arg(args, 1, 0.0, blank=0.0)))
     if len(args) > 2:
@@ -1794,12 +2176,23 @@ def _resized(ev, node, extent):
     return ev.range_values((sheet, r1, c1, r2, c2))
 
 
-def resized_reads(tree, rect_of):
-    """The cells SUMIF and AVERAGEIF read past their sum range (see _resized), for knowing when they are stale:
-    [(sheet, r1, c1, r2, c2)], or None where their ranges are not references the formula names (INDEX(...)) and
-    what they read is known only as they are worked out."""
+def unnamed_reads(tree, rect_of):
+    """The cells a formula reads past the references it names, for knowing when it is stale: SUMIF's and AVERAGEIF's
+    sum range, read over the criteria range's size (see _resized), and a range between references (A1:INDEX(A:A,5)),
+    whose cells lie in the box around every reference inside it. [(sheet, r1, c1, r2, c2)], or None where SUMIF's
+    ranges are not references the formula names (INDEX(...)) and what it reads is known only as it is worked out."""
     out = []
     for node in _all(tree):
+        if node[0] == "range":
+            boxes = {}
+            for ref in references(node):
+                try:
+                    sheet, r1, c1, r2, c2 = rect_of(ref)
+                except _Err:
+                    continue  # a #REF! or #NAME? reads nothing
+                b = boxes.get(id(sheet), (sheet, r1, c1, r2, c2))
+                boxes[id(sheet)] = (sheet, min(b[1], r1), min(b[2], c1), max(b[3], r2), max(b[4], c2))
+            out += boxes.values()
         if node[0] != "func" or node[1] not in ("SUMIF", "AVERAGEIF") or len(node[2]) != 3:
             continue
         area, given = node[2][0], node[2][2]
@@ -1864,16 +2257,31 @@ def f_minifs(ev, args):
     return min_found(_many_criteria(ev, args))
 
 
-# How many arguments SUMIF and the rest take, (fewest, most, step), and which must be references (TAKES's r): Excel
-# refuses as it is entered (error 1004) a formula that gives them another number, or anything but a reference or a
-# function that may hand back cells where they want one (a constant, an operator, SUM(...)).
-_ARGUMENTS = {"COUNTIF": (2, 2, 1), "SUMIF": (2, 3, 1), "AVERAGEIF": (2, 3, 1), "COUNTIFS": (2, 254, 2),
-              "SUMIFS": (3, 255, 2), "AVERAGEIFS": (3, 255, 2), "MAXIFS": (3, 255, 2), "MINIFS": (3, 255, 2)}  # fmt: skip
+# How many arguments a function takes, (fewest, most, step), and which must be references, a letter each ("r"): Excel
+# refuses as it is entered (error 1004) a formula that gives another number, or anything but a reference or a function
+# that may hand back cells where one is wanted (a constant, an operator, SUM(...)).
+_ARGUMENTS = {
+    "COUNTIF": (2, 2, 1, "r"),
+    "SUMIF": (2, 3, 1, "r-r"),
+    "AVERAGEIF": (2, 3, 1, "r-r"),
+    "COUNTIFS": (2, 254, 2, "r-" * 127),
+    **{name: (3, 255, 2, "r" + "r-" * 127) for name in ("SUMIFS", "AVERAGEIFS", "MAXIFS", "MINIFS")},
+    "OFFSET": (3, 5, 1, "r"),
+    "VLOOKUP": (3, 4, 1, ""),
+    "HLOOKUP": (3, 4, 1, ""),
+    "MATCH": (2, 3, 1, ""),
+    "XLOOKUP": (3, 6, 1, ""),
+    "XMATCH": (2, 4, 1, ""),
+    "LOOKUP": (2, 3, 1, ""),
+    "CHOOSE": (2, 255, 1, ""),
+    "INDEX": (2, 4, 1, ""),
+    "INDIRECT": (1, 2, 1, ""),
+}
 _GIVES_CELLS = {"IF", "INDEX", "OFFSET", "INDIRECT", "CHOOSE", "XLOOKUP"}
 
 
 def check_entry(text):
-    """Excel's refusals, as a formula is entered, of what it gives SUMIF and the rest (see _ARGUMENTS)."""
+    """Excel's refusals, as a formula is entered, of what it gives SUMIF, the lookups and the rest (see _ARGUMENTS)."""
     from .errors import VBARuntimeError  # noqa: PLC0415
 
     upper = text.upper()
@@ -1887,12 +2295,14 @@ def check_entry(text):
         if node[0] != "func" or node[1] not in _ARGUMENTS:
             continue
         name, args = node[1], node[2]
-        fewest, most, step = _ARGUMENTS[name]
+        fewest, most, step, wants = _ARGUMENTS[name]
         refused = not fewest <= len(args) <= most or (len(args) - fewest) % step
         for i, a in enumerate(args if not refused else ()):
             while a[0] == "paren":
                 a = a[1]
-            if TAKES[name][i] != "r" or a[0] in ("ref", "name") or (a[0] == "func" and a[1] in _GIVES_CELLS):
+            if i >= len(wants) or wants[i] != "r" or a[0] in ("ref", "name", "range"):
+                continue
+            if a[0] == "func" and a[1] in _GIVES_CELLS:
                 continue
             unknown = a[0] == "func" and (a[1] not in EXCEL_FUNCTIONS or a[1] in _MANY_RESULTS)
             if unknown or a[0] in ("at", "err"):  # a function that may hand back cells, @, #REF!: not checked
@@ -1907,7 +2317,7 @@ def _cells_named(ev, node):
     """The cells an argument names, (sheet, r1, c1, r2, c2): a reference, or what a function hands back as cells."""
     while node[0] == "paren":
         node = node[1]
-    if node[0] in ("ref", "name"):
+    if node[0] in ("ref", "name", "range"):
         return ev.rect_of(node)
     v = ev.ev(node)
     if isinstance(v, Array) and v.rect is not None:
@@ -1978,6 +2388,12 @@ FUNCTIONS = {
     "MATCH": f_match,
     "VLOOKUP": f_vlookup,
     "XLOOKUP": f_xlookup,
+    "HLOOKUP": f_hlookup,
+    "XMATCH": f_xmatch,
+    "LOOKUP": f_lookup,
+    "CHOOSE": f_choose,
+    "OFFSET": f_offset,
+    "INDIRECT": f_indirect,
     "INDEX": f_index,
     "UNIQUE": f_unique,
     "SORT": f_sort,

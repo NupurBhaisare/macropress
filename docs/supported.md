@@ -71,7 +71,7 @@ Some come with limits, and stop the run outside them:
 | Range | Activate, Address, AutoFill, AutoFilter, AutoFit (does nothing: widths are not modelled), Calculate, Cells, Clear, ClearContents, Column, Columns, Copy, Count, CurrentRegion, Cut, End, EntireColumn, EntireRow, FillDown, FillLeft, FillRight, FillUp, Formula, Formula2, Formula2R1C1, FormulaR1C1, Hidden, Item, Locked, NumberFormat, Offset, Parent, PasteSpecial, Resize, Row, Rows, Select, Sort, Text, Value, Value2, Worksheet |
 | Sort (Worksheet.Sort) | SortFields (Add, Add2, Clear, Count), SetRange, Header, MatchCase, Orientation, SortMethod, Apply |
 | Name | Name, RefersTo, RefersToRange |
-| WorksheetFunction | AverageIf, AverageIfs, CountA, CountIf, CountIfs, Find, Max, MaxIfs, Min, MinIfs, Search, Sum, SumIf, SumIfs, XLookup |
+| WorksheetFunction | AverageIf, AverageIfs, Choose, CountA, CountIf, CountIfs, Find, HLookup, Index, Lookup, Match, Max, MaxIfs, Min, MinIfs, Search, Sum, SumIf, SumIfs, VLookup, XLookup, XMatch |
 
 Within those, a few cases stop the run: `PasteSpecial` with `Transpose`, `SkipBlanks` or an `Operation`; `Sort` by
 colour, with a custom order or left to right; `AutoFilter` with criteria other than values, comparisons and wildcards;
@@ -163,12 +163,13 @@ formula or a `SUM` that ends on a sum which all but cancels gives 0, text in ari
 (`="5%"+1`), and `SUM`, `COUNT` and the like count text and logical values written in the formula but pass over
 those read from cells.
 
-Functions: ABS, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA, COUNTIF,
-COUNTIFS, IF, IFERROR, INDEX, INT, ISBLANK, ISNUMBER, ISTEXT, LEFT, LEN, LOWER, MATCH (exact), MAX, MAXIFS, MID, MIN,
-MINIFS, NOT, NOW, OR, RIGHT, ROUND, ROW, ROWS, SORT, SUM, SUMIF, SUMIFS, SUMPRODUCT, TODAY, TRIM, UNIQUE, UPPER,
-VLOOKUP (exact), XLOOKUP (exact). Arithmetic, comparison and `&` operators,
-references to other sheets, defined names, whole rows and columns, array constants (`{1,2;3,4}`), and dynamic arrays
-that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
+Functions: ABS, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, CHOOSE, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA,
+COUNTIF, COUNTIFS, HLOOKUP, IF, IFERROR, INDEX, INDIRECT, INT, ISBLANK, ISNUMBER, ISTEXT, LEFT, LEN, LOOKUP, LOWER,
+MATCH, MAX, MAXIFS, MID, MIN, MINIFS, NOT, NOW, OFFSET, OR, RIGHT, ROUND, ROW, ROWS, SORT, SUM, SUMIF, SUMIFS,
+SUMPRODUCT, TODAY, TRIM, UNIQUE, UPPER, VLOOKUP, XLOOKUP, XMATCH. Arithmetic, comparison and `&` operators,
+references to other sheets, defined names, whole rows and columns, ranges that end on a function's cells
+(`A1:INDEX(A:A,5)`), array constants (`{1,2;3,4}`), and dynamic arrays that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are
+all calculated.
 
 **Ranges and arrays** are worked out as Excel works them out:
 
@@ -181,8 +182,9 @@ that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
 - In a formula written with `Formula2` every range is taken whole, operators and functions work value by value, and
   the result spills; `@` takes one value, as in Excel. A single row or column goes with every row or column of the
   other side, and past the end of a shorter one the value is `#N/A`.
-- `IF`, `INDEX` and `XLOOKUP` hand back the cells of a range they pick, not their values: `=SUM(IF(c, A1:A5))` adds
-  them all up, and `SUM` passes over text it reads that way as it does text in cells.
+- `IF`, `INDEX`, `CHOOSE`, `XLOOKUP`, `OFFSET` and `INDIRECT` hand back the cells of a range they pick, not their
+  values: `=SUM(IF(c, A1:A5))` adds them all up, and `SUM` passes over text it reads that way as it does text in
+  cells.
 - `SUMPRODUCT` counts what is not a number as 0, takes arrays of one size only (`#VALUE!` otherwise), and does not
   round to 0 a sum that all but cancels, as `SUM` does.
 - **Criteria** (`SUMIF`, `COUNTIF`, `AVERAGEIF`, their `S` forms, `MAXIFS`, `MINIFS`) find what Excel finds. A
@@ -201,6 +203,22 @@ that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
   a criterion is wanted gives the formula's own row of it, as any value does; a constant, an operator or a function
   such as `SUM` where a range is wanted is refused as Excel refuses it (error 1004 as the formula is written), as is
   the wrong number of arguments.
+- **Lookups** find what Excel finds. An exact match (`VLOOKUP` and `HLOOKUP` with `FALSE`, `MATCH` with 0) ignores
+  case and takes the wildcards `* ? ~` for text; a number never finds text that reads as one, numbers are compared in
+  full (not to 15 digits), and a value looked up over 255 characters is `#VALUE!` (but in `XLOOKUP`). An approximate
+  match finds the last value at or below the one looked up, the last of equal ones, passing over values of other
+  kinds; `MATCH` with -1 the first equal value, else the last above. `XLOOKUP` and `XMATCH` take their match and search
+  modes; a binary search finds the first equal value (the last, descending). Over values not in order Excel's answer
+  is wherever its halving search lands: MacroPress answers only where it cannot land elsewhere, the value looked up
+  above or below them all (`LOOKUP(9.99E+307, A:A)`, `LOOKUP(2, 1/(A:A<>""), B:B)`), and otherwise leaves the formula
+  for Excel.
+- `INDEX`, `LOOKUP`, `XLOOKUP` and `XMATCH` work an expression they are given out whole in any formula
+  (`MATCH(1, INDEX((A1:A9="x")*(B1:B9="y"), 0), 0)`); `MATCH` and `VLOOKUP` take one cell of a range there, as Excel
+  does without Ctrl+Shift+Enter, and `CHOOSE` with an array (`CHOOSE({1,2}, B:B, A:A)`) puts its ranges side by side.
+- `OFFSET` and `INDIRECT` are worked out again on every change, as in Excel; `INDIRECT` reads A1 or R1C1 text, a
+  sheet's name and defined names, and its text naming nothing is `#REF!`. `INDIRECT` to another workbook stops the
+  run: whether Excel has it open is not known. A wrong number of arguments, or a constant where `OFFSET` wants a
+  reference, is refused as Excel refuses it (error 1004 as the formula is written).
 - **The text of a formula** is kept as Excel keeps what is typed: its functions' names and its references in
   capitals, a sheet's name as the sheet has it (quoted where it could be read as a cell, `'AR2'!A1`), numbers as Excel
   writes them, and no space before a comma. `Formula2` shows a formula written with `Formula` with `@` where it takes
@@ -215,9 +233,10 @@ each its own formula, and a relative reference that runs off the sheet comes rou
 `Formula` reads R1C1 text too where A1 style cannot (`=R1C1`). An A1 reference given to `FormulaR1C1`, which Excel
 turns into a name that cannot exist (`='A1'+1`), stops the run.
 
-A formula using any other function (`INDIRECT`, `OFFSET`, `TEXT`, ...), or text that Excel would read by regional
-settings (a date, a currency sign) does not stop the run. It is saved without a value, for Excel to calculate, and the report names it
-(`FORMULA-NOT-EVALUATED`). A macro that then reads that formula's value does stop, since its value is unknown.
+A formula using any other function (`TEXT`, `ROUNDUP`, `EOMONTH`, ...), or text that Excel would read by regional
+settings (a date, a currency sign) does not stop the run. It is saved without a value, for Excel to calculate, and the
+report names it (`FORMULA-NOT-EVALUATED`). A macro that then reads that formula's value does stop, since its value is
+unknown.
 
 ## Regional settings
 

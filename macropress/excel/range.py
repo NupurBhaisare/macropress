@@ -282,18 +282,26 @@ class Range(VBAObject):
             value, formula, fmt = entry.read(v)
             if formula is not None:
                 _check_formula(formula)
+                formula = self._as_kept(formula, dynamic=False)
             return (PENDING if formula is not None else value), formula, fmt
         raise VBARuntimeError(13, "Type mismatch")
 
     def get_formula(self):
-        """A formula as written, or what a cell with no formula holds, as text: TRUE, #N/A, a date's number."""
+        """A formula as Excel keeps it (see _as_kept), or what a cell with no formula holds, as text: TRUE, #N/A, a
+        date's number. A dynamic-array formula is shown as a formula that is not one reads it, without the @ that
+        one takes as read (see formula.legacy_view)."""
         if (self.r1, self.c1) != (self.r2, self.c2):
             raise VBANotImplemented("Formula of a multi-cell range")
         cell = self.sheet.get_cell(self.r1, self.c1)
         if cell is None or (cell.formula is None and cell.value is None):
             return ""
         if cell.formula is not None:
-            return "=" + fx.display_syntax(cell.formula)
+            text = fx.display_syntax(cell.formula)
+            if self.sheet.book.is_dynamic(self.sheet, self.r1, self.c1):
+                text = fx.legacy_view(text)
+                if text is None:
+                    raise VBANotImplemented(f"Formula of ={fx.display_syntax(cell.formula)}: where its @ goes")
+            return "=" + text
         v = self.sheet.raw_value(self.r1, self.c1)
         if isinstance(v, bool):
             return "TRUE" if v else "FALSE"
@@ -310,12 +318,16 @@ class Range(VBAObject):
         self._single_sheet_target("writing formulas")
         self.sheet.check_merged(*self.rect)
         if r1c1 or written_r1c1(text[1:]):
-            at = R1C1Formula(text[1:]).a1
-        else:
-            _check_formula(text[1:])
+            r1c1_formula = R1C1Formula(text[1:])
 
             def at(r, c):
-                return shift_formula(text[1:], r - self.r1, c - self.c1)
+                return self._as_kept(r1c1_formula.a1(r, c), dynamic)
+        else:
+            _check_formula(text[1:])
+            kept = self._as_kept(text[1:], dynamic)
+
+            def at(r, c):
+                return shift_formula(kept, r - self.r1, c - self.c1)
 
         _check_formula(at(self.r1, self.c1))
         areas = self._written_areas()
@@ -336,7 +348,28 @@ class Range(VBAObject):
         """Formula2: dynamic-array semantics; an array result spills into the cells below and to the right."""
         self._write_formula(value, dynamic=True)
 
-    get_formula2 = get_formula
+    def get_formula2(self):
+        """A formula as a dynamic-array formula reads it: one that is not one shows @ where it takes one value of a
+        range or of what a function hands back (see formula.formula2_view)."""
+        if (self.r1, self.c1) != (self.r2, self.c2):
+            raise VBANotImplemented("Formula2 of a multi-cell range")
+        cell = self.sheet.get_cell(self.r1, self.c1)
+        if cell is None or cell.formula is None:
+            return self.get_formula()
+        text = fx.display_syntax(cell.formula)
+        if not self.sheet.book.is_dynamic(self.sheet, self.r1, self.c1):
+            text = fx.formula2_view(text, fx.ref_size(self.sheet.book, self.sheet))
+            if text is None:
+                raise VBANotImplemented(f"Formula2 of ={fx.display_syntax(cell.formula)}: where Excel puts its @")
+        return "=" + text
+
+    def _as_kept(self, formula, dynamic):
+        """A formula (without its =) as Excel keeps what it is given (see formula.normalized); in one that is not a
+        dynamic array, without the @ it takes as read."""
+        text = fx.normalized(formula, self.sheet.book.find_sheet)
+        if not dynamic and "@" in text:
+            text = fx.legacy_view(text) or text
+        return text
 
     def get_formular1c1(self):
         """The formula written R1C1 style, as seen from its cell; for a cell with no formula, what Formula gives."""

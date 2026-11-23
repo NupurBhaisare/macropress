@@ -161,21 +161,45 @@ the cells they read change: before a macro reads them, and before the copy is sa
 Excel's own habits with numbers are followed: they are compared to 15 significant digits (`=0.1+0.2=0.3` is TRUE), a
 formula or a `SUM` that ends on a sum which all but cancels gives 0, text in arithmetic is read as typed text
 (`="5%"+1`), and `SUM`, `COUNT` and the like count text and logical values written in the formula but pass over
-those read from cells. A formula that wants one value and is given a range takes the cell in its own row or column.
+those read from cells.
 
-Functions: ABS, AND, AVERAGE, CONCAT, COUNT, COUNTA, IF, IFERROR, INDEX, INT, ISBLANK, ISNUMBER, ISTEXT, LEFT, LEN,
-LOWER, MATCH (exact), MAX, MID, MIN, NOT, NOW, OR, RIGHT, ROUND, SORT, SUM, TODAY, TRIM, UNIQUE, UPPER, VLOOKUP
-(exact), XLOOKUP (exact). Arithmetic, comparison and `&` operators, references to other sheets, defined names, whole
-rows and columns, and dynamic arrays that spill (`UNIQUE`, `SORT`) are all calculated.
+Functions: ABS, AND, AVERAGE, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA, IF, IFERROR, INDEX, INT, ISBLANK,
+ISNUMBER, ISTEXT, LEFT, LEN, LOWER, MATCH (exact), MAX, MID, MIN, NOT, NOW, OR, RIGHT, ROUND, ROW, ROWS, SORT, SUM,
+SUMPRODUCT, TODAY, TRIM, UNIQUE, UPPER, VLOOKUP (exact), XLOOKUP (exact). Arithmetic, comparison and `&` operators,
+references to other sheets, defined names, whole rows and columns, array constants (`{1,2;3,4}`), and dynamic arrays
+that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
+
+**Ranges and arrays** are worked out as Excel works them out:
+
+- In a formula written with `Formula` (or `Value`), a range where one value is wanted (in arithmetic, or given to a
+  function such as `ROUND` or `LEN`) gives the cell in the formula's own row, or column, and `#VALUE!` where the range
+  passes the formula by: `=SUM(A1:A5*2)` in row 2 is `A2*2`. A range given to a function that takes a reference
+  (`SUM`, `MAX`, `COUNT`, `AND`, `CONCAT`) is taken whole; `SUMPRODUCT` works on arrays whatever the formula. An array
+  constant stays an array (`=SUM(A1:A5*{1,2})` in row 3 is 9), and a formula that ends on an array shows its first
+  value (`=ROW(A2:A4)` is 2).
+- In a formula written with `Formula2` every range is taken whole, operators and functions work value by value, and
+  the result spills; `@` takes one value, as in Excel. A single row or column goes with every row or column of the
+  other side, and past the end of a shorter one the value is `#N/A`.
+- `IF`, `INDEX` and `XLOOKUP` hand back the cells of a range they pick, not their values: `=SUM(IF(c, A1:A5))` adds
+  them all up, and `SUM` passes over text it reads that way as it does text in cells.
+- `SUMPRODUCT` counts what is not a number as 0, takes arrays of one size only (`#VALUE!` otherwise), and does not
+  round to 0 a sum that all but cancels, as `SUM` does.
+- **The text of a formula** is kept as Excel keeps what is typed: its functions' names and its references in
+  capitals, a sheet's name as the sheet has it (quoted where it could be read as a cell, `'AR2'!A1`), numbers as Excel
+  writes them, and no space before a comma. `Formula2` shows a formula written with `Formula` with `@` where it takes
+  one value (`=SUM(@A1:A5*2)`), and `Formula` shows one written with `Formula2` without them. Where Excel's choice of
+  `@` is not known (a function MacroPress does not model, an array where one value is wanted), reading it stops.
+- **Saved**, a dynamic-array formula stays one: one that spills, and one of a single value that takes ranges whole
+  (`=SUM(A1:A5*2)` from `Formula2`), which read the other way would take one cell of them. A workbook that has no
+  dynamic arrays yet is given the part of the file Excel keeps them in. `@` is saved as Excel saves it.
 
 Formulas can be written and read R1C1 style (`FormulaR1C1`, `Formula2R1C1`): one text written to many cells gives
 each its own formula, and a relative reference that runs off the sheet comes round from its other edge, as in Excel.
 `Formula` reads R1C1 text too where A1 style cannot (`=R1C1`). An A1 reference given to `FormulaR1C1`, which Excel
 turns into a name that cannot exist (`='A1'+1`), stops the run.
 
-A formula using any other function (`SUMIF`, `COUNTIF`, `SUMPRODUCT`, `INDIRECT`, ...), an array constant
-(`{1,2,3}`), arithmetic on a whole range (`=A1:A3*2`), or text that Excel would read by regional settings (a date, a
-currency sign) does not stop the run. It is saved without a value, for Excel to calculate, and the report names it
+A formula using any other function (`SUMIF`, `COUNTIF`, `INDIRECT`, ...), or text that Excel would read by regional
+settings (a date, a currency sign) does not stop the run. It is saved without a value, for Excel to calculate, and the report names it
 (`FORMULA-NOT-EVALUATED`). A macro that then reads that formula's value does stop, since its value is unknown.
 
 ## Regional settings

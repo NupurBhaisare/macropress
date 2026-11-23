@@ -44,8 +44,8 @@ and hand back the result. It works just as well in a script, a scheduled job or 
   its translation.
 - **Runs it against a model of the workbook**: `Range`, `Cells`, `End(xlUp)`, `CurrentRegion`, `Offset`, `Resize`,
   `Copy`, `Cut` and `PasteSpecial`, `FillDown` and `AutoFill`, `Sort`, `AutoFilter`, `ClearContents`, number formats,
-  sheet protection and hidden sheets, sheets and named ranges, formulas (A1 or R1C1 style) that recalculate when their
-  inputs change, `WorksheetFunction`, and VBA's own rules: Variant conversions, banker's rounding, error numbers,
+  sheet protection and hidden sheets, sheets and named ranges, formulas (A1 or R1C1 style, arrays and spills) that
+  recalculate when their inputs change, `WorksheetFunction`, and VBA's own rules: Variant conversions, banker's rounding, error numbers,
   `On Error`. The full list is in [docs/supported.md](docs/supported.md).
 - **Answers the questions macros ask**: answers to `MsgBox` and `InputBox` come from the command line, and `Now`,
   `Date` and `Timer` run on a clock you can fix, so a run can be repeated exactly.

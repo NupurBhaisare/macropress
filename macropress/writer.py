@@ -21,7 +21,7 @@ from lxml import etree
 from .errors import VBANotImplemented
 from .excel import PENDING, area_text, col_letters, parse_area
 from .excel.addresses import moved_references
-from .formula import file_syntax, rename_sheets
+from .formula import display_syntax, file_syntax, needs_arrays, ref_size, rename_sheets
 from .numfmt import BUILTIN_FORMATS, builtin_code
 from .values import XLError
 from .xlsx import NS, REL_NS, Package, custom_formats, read_workbook
@@ -130,6 +130,7 @@ def save_workbook(book, original_path, out_path):
     sheet_parts = [rels[s.get(f"{{{R}}}id")] for s in wb_root.iter(q("sheet"))]
 
     patched = {}
+    metadata = _Metadata(_default_cm(book), pkg)
     formulas_changed = False
     pending_formulas = False
     filter_refs = {}
@@ -159,7 +160,7 @@ def save_workbook(book, original_path, out_path):
         if not (changed or old.hidden_rows != new.hidden_rows):
             continue
         patched[part] = _patch_sheet(
-            pkg.zip.read(part), old, new, cells, sst, selected, old_af != new_af, _default_cm(book), styles, lines,
+            pkg.zip.read(part), old, new, cells, sst, selected, old_af != new_af, metadata.cm, styles, lines,
             protection,
         )  # fmt: skip
         if old_af != new_af:
@@ -178,6 +179,8 @@ def save_workbook(book, original_path, out_path):
         dropped.add("xl/calcChain.xml")
         patched["xl/_rels/workbook.xml.rels"] = _drop_rel(pkg.zip.read("xl/_rels/workbook.xml.rels"), "calcChain")
         patched["[Content_Types].xml"] = _drop_override(pkg.zip.read("[Content_Types].xml"), "/xl/calcChain.xml")
+    if metadata.added:
+        metadata.add(patched)
 
     with zipfile.ZipFile(out_path, "w") as out:
         for info in pkg.zip.infolist():
@@ -185,6 +188,8 @@ def save_workbook(book, original_path, out_path):
                 continue
             data = patched.get(info.filename)
             out.writestr(info, data if data is not None else pkg.zip.read(info.filename))
+        for name in sorted(set(patched) - pkg.names):  # parts the copy has and the original had not
+            out.writestr(name, patched[name])
     return sorted(p for p in patched if p.startswith("xl/worksheets/"))
 
 
@@ -315,6 +320,52 @@ def _check_renamed(pkg, patched, renamed):
             raise VBANotImplemented(f"renaming a sheet that {part} still refers to ({m.group(0)})")
 
 
+METADATA = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    f'<metadata xmlns="{M}" xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray">'
+    '<metadataTypes count="1"><metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" '
+    'pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" '
+    'coerce="1" cellMeta="1"/></metadataTypes><futureMetadata name="XLDAPR" count="1"><bk><extLst>'
+    '<ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}"><xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/>'
+    '</ext></extLst></bk></futureMetadata><cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata>'
+    "</metadata>"
+)
+
+
+class _Metadata:
+    """The cell metadata a dynamic-array formula points to (its cm). A workbook with none yet is given the part Excel
+    writes for them, the first time a formula needs it."""
+
+    def __init__(self, existing, pkg):
+        self.existing, self.pkg, self.added = existing, pkg, False
+
+    def cm(self):
+        if self.existing is not None:
+            return self.existing
+        if "xl/metadata.xml" in self.pkg.names:
+            raise VBANotImplemented("saving a new dynamic-array formula in a workbook whose metadata has other kinds")
+        self.added = True
+        return "1"
+
+    def add(self, patched):
+        patched["xl/metadata.xml"] = METADATA.encode("utf-8")
+        name = "xl/_rels/workbook.xml.rels"
+        rels = etree.fromstring(patched.get(name) or self.pkg.zip.read(name))
+        ids = {int(m.group(1)) for r in rels if (m := re.fullmatch(r"rId(\d+)", r.get("Id", "")))}
+        etree.SubElement(
+            rels, f"{{{PKG_REL}}}Relationship", Id=f"rId{max(ids, default=0) + 1}", Target="metadata.xml",
+            Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata",
+        )  # fmt: skip
+        patched[name] = etree.tostring(rels, xml_declaration=True, encoding="UTF-8", standalone=True)
+        name = "[Content_Types].xml"
+        types = etree.fromstring(patched.get(name) or self.pkg.zip.read(name))
+        etree.SubElement(
+            types, f"{{{CT_NS}}}Override", PartName="/xl/metadata.xml",
+            ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml",
+        )  # fmt: skip
+        patched[name] = etree.tostring(types, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def _default_cm(book):
     """The cell-metadata index the file uses for dynamic-array formulas, if it has any."""
     for sheet in book.sheets:
@@ -415,11 +466,13 @@ def _patch_sheet(
             el = _new_cell(row_el, r, c, column_styles)
             cmap[(r, c)] = el
         spill = new.spills.get((r, c)) if cell.formula is not None else None
+        if spill is None and cell.formula is not None and new.book.is_dynamic(new, r, c):
+            # a dynamic-array formula of one value is saved as one where it takes ranges whole: read as a formula
+            # that is not one, it would take one value of them instead
+            if needs_arrays(display_syntax(cell.formula), ref_size(new.book, new)):
+                spill = (r, c, r, c)
         if spill is not None:
-            cm = new.dynamic_cm.get((r, c)) or default_cm
-            if cm is None:
-                raise VBANotImplemented("saving a new dynamic-array formula in a workbook that has none")
-            spill = (spill, cm)
+            spill = (spill, new.dynamic_cm.get((r, c)) or default_cm())
         _set(el, cell, sst, spill, (r, c) in new.spill_owner, keep=el.find(q("f")) if (r, c) in keep_formula else None)
         if styles is not None:
             styles.apply(el, *cell.style)

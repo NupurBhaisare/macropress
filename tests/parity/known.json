@@ -3,9 +3,20 @@
   {
    "why": "Whole numbers. MacroPress has one whole-number type where VBA has Integer and Long: TypeName goes by the number's size, and two Integers whose sum or product passes 32,767 give the number where VBA stops with error 6.",
    "tests": {
+    "T_cut_refs": {
+     "8": "[Integer:0]"
+    },
+    "T_cut_paste": {
+     "1": "[Integer:2]",
+     "2": "[Integer:0]",
+     "6": "[Integer:1]"
+    },
     "T_enum3": {
      "11": "[Integer]",
      "12": "[Integer]"
+    },
+    "T_paste_tile2": {
+     "9": "[Integer:1]"
     },
     "T_cur1": {
      "10": "[Integer]",
@@ -36,17 +47,6 @@
     "T_types2": {
      "8": "[Integer]"
     },
-    "T_cut_refs": {
-     "8": "[Integer:0]"
-    },
-    "T_cut_paste": {
-     "1": "[Integer:2]",
-     "2": "[Integer:0]",
-     "6": "[Integer:1]"
-    },
-    "T_paste_tile2": {
-     "9": "[Integer:1]"
-    },
     "T_pr_book": {
      "4": "[Integer:-1]"
     },
@@ -62,9 +62,6 @@
      "8": "[Integer:-1]",
      "10": "[Integer:-1]",
      "12": "[Integer:-1]"
-    },
-    "T_vis_use": {
-     "6": "[Integer:161]"
     }
    }
   },
@@ -191,7 +188,8 @@
     "T_vis_use": {
      "2": 1004.0,
      "4": 1004.0,
-     "5": "[Out]"
+     "5": "[Out]",
+     "6": "[Integer:163]"
     }
    }
   }
@@ -218,7 +216,7 @@
   "T_code84": "the number format 'Standard': how Excel reads 't' in it is n",
   "T_cut_edge": "a cut that moves part of the range A1:A3 a formula reads",
   "T_cut_filtered": "cutting cells of a filter's range, or onto them",
-  "T_cut_sheets_range": "a cut that moves part of the range CT11!A1:A2 a formula read",
+  "T_cut_sheets_range": "a cut that moves part of the range 'CT11'!A1:A2 a formula re",
   "T_ddiff1": "DateDiff interval 'q'",
   "T_ddiff2": "DateDiff interval 'ww'",
   "T_h031": "reading FX!AH31: a formula whose value could not be calculat",
@@ -227,39 +225,14 @@
   "T_h036": "reading FX!AH36: a formula whose value could not be calculat",
   "T_h039": "reading FX!AH39: a formula whose value could not be calculat",
   "T_h064": "reading FX!AH64: a formula whose value could not be calculat",
-  "T_h068": "reading FX!AH68: a formula whose value could not be calculat",
-  "T_h070": "reading FX!AH70: a formula whose value could not be calculat",
-  "T_h071": "reading FX!AH71: a formula whose value could not be calculat",
   "T_h073": "reading FX!AH73: a formula whose value could not be calculat",
   "T_h077": "reading FX!AH77: a formula whose value could not be calculat",
   "T_h089": "reading FX!AH89: a formula whose value could not be calculat",
   "T_h103": "reading FX!AH103: a formula whose value could not be calcula",
-  "T_ii04": "reading FX!AL2: a formula whose value could not be calculate",
-  "T_ii05": "reading FX!AL9: a formula whose value could not be calculate",
-  "T_ii06": "reading FX!AM2: a formula whose value could not be calculate",
-  "T_ii07": "reading FX!AM9: a formula whose value could not be calculate",
-  "T_ii08": "reading FX!AN2: a formula whose value could not be calculate",
-  "T_ii09": "reading FX!AN3: a formula whose value could not be calculate",
-  "T_ii11": "reading FX!AO3: a formula whose value could not be calculate",
-  "T_ii12": "reading FX!AP2: a formula whose value could not be calculate",
-  "T_ii13": "reading FX!AP3: a formula whose value could not be calculate",
-  "T_ii14": "reading FX!AP9: a formula whose value could not be calculate",
-  "T_ii18": "reading FX!AL3: a formula whose value could not be calculate",
-  "T_ii19": "reading FX!AN9: a formula whose value could not be calculate",
-  "T_ii20": "reading FX!AO9: a formula whose value could not be calculate",
-  "T_ii21": "reading FX!AP1: a formula whose value could not be calculate",
   "T_ii22": "reading FX!AJ1: a formula whose value could not be calculate",
-  "T_ii23": "reading FX!AK1: a formula whose value could not be calculate",
-  "T_ii24": "reading FX!AL1: a formula whose value could not be calculate",
-  "T_ii_f2": "reading FX!AT2: a formula whose value could not be calculate",
   "T_isnum1": "reading '$5' as a number: whether VBA takes a currency sign ",
   "T_isnumb0": "reading '($5)' as a number: whether VBA takes a currency sig",
   "T_isnumb3": "reading '$ 5' as a number: whether VBA takes a currency sign",
-  "T_j007": "reading FX!AV7: a formula whose value could not be calculate",
-  "T_j008": "reading FX!AV8: a formula whose value could not be calculate",
-  "T_j009": "reading FX!AV9: a formula whose value could not be calculate",
-  "T_j010": "reading FX!AV10: a formula whose value could not be calculat",
-  "T_j026": "reading FX!AV26: a formula whose value could not be calculat",
   "T_m08b": "writing a Currency to a cell formatted as Text",
   "T_nf_array": "NumberFormat set from an array",
   "T_pr_fill": "cutting cells of a protected sheet (unverified)",

@@ -1474,8 +1474,90 @@ SHEETS += [("RC", [8] * 5, [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10], [11, 12, 13, 14, 
            ("My R1C1", [8], [[1000], [2000]]), ("RCE", [8], [])]
 SHEETS += [(name, [8] * 12, []) for name in ("FL1", "FL2", "FL3", "FL4", "FL5", "PL", "PL2", "AF1", "AF2", "AF3", "AF4", "AF5")]
 SHEETS += [(f"AS{k}", [8], []) for k in range(1, len(SERIES) + 1)] + [(f"CT{i}", [8] * 8, []) for i in range(1, 13)]
-SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
+
+# ------------------------------------------------------------------------------- group 2.1: arrays in formulas
+# AR and AR2 hold the same data: A 1-5, B text, C 10-50, D mixed, E three numbers whose sum all but cancels. Formulas
+# go to columns H on, a test to its own column, and the row a formula is in is the row it takes of A1:A5.
+AR_ROWS = [[1, "x", 10, 1, 0.1], [2, "yy", 20, "2", 0.2], [3, "x", 30, True, -0.3], [4, "zzz", 40], [5, "x", 50, 4]]
+
+
+def FA(sheet, cell, formula, dynamic=False):
+    """Write a formula (Formula, or Formula2 with dynamic) and read its value."""
+    prop = "Formula2" if dynamic else "Formula"
+    return [f'{W(sheet)}.Range("{cell}").{prop} = {q(formula)}', f'V: {W(sheet)}.Range("{cell}").Value']
+
+
+def TA(name, sheet, column, rows_formulas, dynamic=False):
+    T("TArray", name, *[x for row, f in rows_formulas for x in FA(sheet, f"{column}{row}", f, dynamic)])
+
+
+TA("ar_const", "AR", "H", [(1, "={1,2;3,4}"), (2, "=SUM({1,2;3,4})"), (3, "=SUM({1,2,3}*2)"), (4, "=SUM({1,2,3}+{10;20})"),
+                          (5, "=SUM({1,2,3}+{10,20})"), (6, '={-1,"a",TRUE,#N/A}'), (7, "=INDEX({1,2;3,4},2,1)"),
+                          (8, "=MATCH(2,{1,2,3},0)"), (9, '=COUNTA({1,"",TRUE})'), (10, "=SUM({1,#N/A})"), (11, "=COUNT({1,#N/A})"),
+                          (12, "=ROWS({1,2;3,4})"), (13, '=AVERAGE({1,2,"x"})'), (14, '=LEN({"ab","c"})'), (15, '=SUM(LEN({"ab","c"}))')])
+T("TArray", "ar_const_bad", *[f'E: {W("AR")}.Range("I{k}").Formula = {q(f)}' for k, f in
+                              enumerate(["={A1,2}", "={1+1,2}", "={}", "={1,2;3}", "={1,,2}", "={1;2,3;4}", '={"a";"b"}', "={1,-2.5E+3}"], 1)],
+  f'V: {W("AR")}.Range("I7").Value', f'V: {W("AR")}.Range("I8").Value', f'S: {W("AR")}.Range("I8").Formula')
+TA("ar_ops", "AR", "J", [(3, "=A1:A5^2"), (2, "=A1:A5%"), (4, "=A1:A5>2"), (1, "=(A1:A5)*2"), (5, "=A2:A4*C2:C4"), (6, "=A2:A4*C2:C4"),
+                        (7, "=A1:A5*2"), (8, "=A1:A5*{1,2}"), (9, "=B1:B5&C1:C5"), (10, "=-A1:A5"), (11, "=AR2!A1:A5+1"), (12, '=B1:B5="x"')])
+TA("ar_ops2", "AR2", "C", [(9, "=A1:C1*2"), (10, "=SUM(A1:A5*{1,2})"), (11, "=A3:A5*{1;2;3}")])  # AR's column C is read whole
+TA("ar_ops3", "AR", "K", [(3, "=SUM(A1:A5*{1,2})"), (2, "=A1:A5*{1;2;3;4;5}"), (4, "=SUM(A1:A5*C1:C5)"), (1, "=E1:E3*10"), (5, "=AR2!C1:C5")])
+TA("ar_fns", "AR", "L", [(2, "=LEN(B1:B5)"), (3, "=ROUND(E1:E3*10,0)"), (4, "=UPPER(B1:B5)"), (5, "=ISNUMBER(D1:D5)"), (1, "=ABS(E1:E3)"),
+                        (6, '=IF(A1:A5>2,"big","small")'), (7, "=NOT(A1:A5>2)"), (8, "=ISBLANK(D1:D5)")])
+TA("ar_aggr", "AR", "M", [(4, "=AND(A1:A5>2)"), (2, "=COUNT(A1:A5*1)"), (3, "=AVERAGE(A1:A5*2)"), (5, '=CONCAT(B1:B5&"!")'),
+                         (1, "=OR(A1:A5>4)"), (6, "=SUM(IF(A1:A5>2,C1:C5,0))"), (4, "=SUM(IF(A1:A5>2,C1:C5,0))"), (7, "=MAX(A1:A5)"),
+                         (8, '=CONCATENATE(B1:B5,"!")'), (3, '=CONCATENATE(B1:B5,"!")')])
+TA("ar_sumproduct", "AR", "N", [(1, "=SUMPRODUCT(A1:A5,C1:C5)"), (2, '=SUMPRODUCT((B1:B5="x")*C1:C5)'), (3, "=SUMPRODUCT(--(A1:A5>2))"),
+                               (4, "=SUMPRODUCT(A1:A5)"), (5, "=SUMPRODUCT(A1:A5,{1;1;1;1;1})"), (6, "=SUMPRODUCT(A1:A5,{1,1,1,1,1})"),
+                               (7, "=SUMPRODUCT(A1:A5,B1:B5)"), (8, "=SUMPRODUCT(A1:A5*B1:B5)"), (9, "=SUMPRODUCT(D1:D5)"),
+                               (10, "=SUMPRODUCT(E1:E3)"), (11, "=SUMPRODUCT({1,#N/A})"), (12, "=SUMPRODUCT(A1:A5,2)"), (13, "=SUMPRODUCT(5)"),
+                               (14, "=SUMPRODUCT((A:A>2)*1)"), (15, "=SUMPRODUCT((A1:A5>2)+(C1:C5>40))")])
+TA("ar_sumproduct2", "AR", "O", [(1, "=SUMPRODUCT(--(B:B=\"x\"),C:C)"), (2, '=SUMPRODUCT((A1:A5>1)*(A1:A5<5)*C1:C5)'), (3, "=SUMPRODUCT(A1:A5/A1:A5)"),
+                                (4, "=SUMPRODUCT(1/A1:A5)"), (5, "=SUMPRODUCT({0.1,0.2,-0.3},{1,1,1})"), (6, "=SUMPRODUCT(--({0.1}+{0.2}={0.3}))"),
+                                (7, "=SUMPRODUCT(A1:A5*(D1:D5=1))"), (8, "=SUMPRODUCT(A1:A2,C1:C2,A1:A2)"), (9, "=SUMPRODUCT(TRUE)"),
+                                (10, '=SUMPRODUCT("3")'), (11, "=SUMPRODUCT(A1:A5,A1:A4)")])
+TA("ar_row", "AR", "P", [(7, "=ROW()"), (8, "=COLUMN()"), (9, "=ROW(C5)"), (10, "=COLUMN(C5)"), (11, "=ROW(A2:A4)"), (3, "=ROW(A2:A4)"),
+                        (12, "=COLUMN(A1:C1)"), (13, "=ROWS(A1:C5)"), (14, "=COLUMNS(A1:C5)"), (15, "=ROW(INDEX(A1:A5,3))"),
+                        (16, "=SUMPRODUCT((ROW(A1:A5)>2)*A1:A5)"), (17, "=ROW(A:A)"), (18, "=ROWS(A:A)"), (19, "=ROW(AR2!F2)"), (20, "=COLUMNS(1:1)")])
+TA("ar_refs", "AR", "Q", [(1, "=SUM(IF(TRUE,B1,0),1)"), (2, "=SUM(IF(FALSE,0,A1:A3))"), (3, "=SUM(INDEX(A1:C5,0,3))"), (4, "=SUM(INDEX(A1:C5,2,0))"),
+                         (5, "=COUNT(INDEX(D1:D5,3))"), (6, "=SUM(XLOOKUP(2,A1:A5,B1:B5),1)"), (7, "=SUM(IFERROR(B1,0),1)"),
+                         (8, "=SUM(IFERROR(A1:A3,0))"), (9, "=IF(TRUE,A1:A5)"), (3, "=IF(TRUE,A1:A5)"), (10, '=SUM(IF(TRUE,"5"),1)'),
+                         (11, "=SUM(INDEX({1,\"2\"},2),1)")])
+T("TArray", "ar_formula2", *[x for k, f in enumerate(["=A1:A5*2", "=SUM(A1:A5*2)", "=SUM(A1:A5)", "=INDEX(A1:A5,0)", "=LEN(B1:B5)",
+                                                       "=SUMPRODUCT(A1:A5,C1:C5)", "={1,2,3}", "=IF(A1:A5>2,1,0)", "=ROW(A1:A3)",
+                                                       "=A1+B1", "=A2:A4", "=MAX(A1:A5)", "=AR2!A1:A5"], 1)
+                             for x in (f'{W("AR")}.Range("R{k + 1}").Formula = {q(f)}', f'S: {W("AR")}.Range("R{k + 1}").Formula2')])
+T("TArray", "ar_at", f'E: {W("AR")}.Range("S3").Formula2 = "=@A1:A5"', f'V: {W("AR")}.Range("S3").Value', f'S: {W("AR")}.Range("S3").Formula',
+  f'E: {W("AR")}.Range("S2").Formula2 = "=SUM(@A1:A5*2)"', f'V: {W("AR")}.Range("S2").Value', f'S: {W("AR")}.Range("S2").Formula',
+  f'E: {W("AR")}.Range("S4").Formula = "=@A1:A5*2"', f'V: {W("AR")}.Range("S4").Value', f'S: {W("AR")}.Range("S4").Formula2',
+  f'E: {W("AR")}.Range("S5").Formula2 = "=@A1:A5+@C1:C5"', f'V: {W("AR")}.Range("S5").Value', f'S: {W("AR")}.Range("S5").Formula')
+T("TArray", "ar_formula2b", *[x for k, f in enumerate(["=INDEX(A1:A5,2)", "=IF(TRUE,A1:A5)", "=VLOOKUP(A1:A5,A1:C5,2,FALSE)", "=A1:A5",
+                                                        "=SUM(IF(A1:A5>2,C1:C5))", "=ROUND(A1:A5,0)+1", "=-A1:A5", "=(A1:A5)",
+                                                        '=A1:A5&"x"', "=SUM({1,2}*A1:A5)", "=ROW()", "=ROWS(A1:A5)",
+                                                        "=XLOOKUP(2,A1:A5,B1:B5)", "=INDEX(A1:C5,2,3)", "=IF(A1>0,A2:A3,A4)"], 1)
+                              for x in (f'{W("AR")}.Range("U{k}").Formula = {q(f)}', f'S: {W("AR")}.Range("U{k}").Formula2')])
+T("TArray", "ar_text", *[x for k, f in enumerate(["=AR2!A1+1", "=sum(a1:a2)", "=ar2!a1", "= A1 + 1", "=SUM( A1 , 2 )", "='AR2'!B2",
+                                                  "=Ar2!A1:A2", "=sumproduct(a1:a2,c1:c2)"], 1)
+                          for x in (f'{W("AR")}.Range("V{k}").Formula = {q(f)}', f'S: {W("AR")}.Range("V{k}").Formula')])
+# the same in dynamic-array formulas, Formula2: each test spills in its own block of AR2
+DY = [("ar_dyn1", "H", 1, "=A1:A5*2", ["H1", "H5"]), ("ar_dyn2", "I", 1, "=SUM(A1:A5*2)", ["I1"]), ("ar_dyn3", "J", 1, "=LEN(B1:B5)", ["J2", "J4"]),
+      ("ar_dyn4", "K", 1, "=IF(A1:A5>2,C1:C5,0)", ["K1", "K4"]), ("ar_dyn5", "L", 1, "=SUM(IF(A1:A5>2,C1:C5,0))", ["L1"]),
+      ("ar_dyn6", "M", 1, "=AND(A1:A5>2)", ["M1"]), ("ar_dyn7", "N", 1, '=CONCAT(B1:B5&"!")', ["N1"]), ("ar_dyn8", "O", 1, "=A1:A3*{1,2}", ["O1", "P3"]),
+      ("ar_dyn9", "R", 1, "={1,2,3}+{10;20}", ["R1", "T2"]), ("ar_dyn10", "V", 1, "={1,2,3}+{10,20}", ["V1", "X1"]),
+      ("ar_dyn11", "Z", 1, "=ROW(A1:A3)", ["Z1", "Z3"]), ("ar_dyn12", "AA", 1, "=COUNT(A1:A5*1)", ["AA1"]), ("ar_dyn13", "AB", 7, "=ROW()", ["AB7"]),
+      ("ar_dyn14", "AC", 1, "=A1:A5>2", ["AC1", "AC5"]), ("ar_dyn15", "AD", 1, "=-A1:A3", ["AD3"]),
+      ("ar_dyn16", "AE", 1, "={0.1;0.4}+{0.2;0.5}-{0.3;0.9}", ["AE1", "AE2"]), ("ar_dyn17", "AF", 1, "=1/{1,0,2}", ["AF1", "AG1", "AH1"]),
+      ("ar_dyn18", "AI", 1, "=SUM(IFERROR(1/{1,0,2},0))", ["AI1"]), ("ar_dyn19", "AJ", 1, "=COUNT(1/{1,0,2})", ["AJ1"]),
+      ("ar_dyn20", "AK", 1, "=SUM(1/{1,0,2})", ["AK1"]), ("ar_dyn21", "AL", 1, "=E1:E3+0", ["AL3"]), ("ar_dyn22", "AM", 1, "=A1:A5*C1:C3", ["AM3", "AM4"]),
+      ("ar_dyn23", "AN", 1, "=INDEX(A1:C5,0,3)", ["AN1", "AN5"]), ("ar_dyn24", "AO", 1, '=IF(D1:D5="",0,1)', ["AO3", "AO4"]),
+      ("ar_dyn25", "AP", 1, "=ISNUMBER(D1:D5)", ["AP1", "AP2"]), ("ar_dyn26", "AQ", 1, "=E1:E3*10", ["AQ1"])]
+for name, col, row, formula, reads in DY:
+    T("TArray", name, f'{W("AR2")}.Range("{col}{row}").Formula2 = {q(formula)}', *[f'V: {W("AR2")}.Range("{cell}").Value' for cell in reads])
+T("TArray", "ar_legacy_more", *FA("AR", "T1", "=SUM(F1:F3)"), *FA("AR", "T2", "=SUMPRODUCT((B1:B5=\"x\")*(A1:A5>2))"),
+  *FA("AR", "T3", "=SUM((A1:A5>2)*1)"), *FA("AR", "T4", "=SUM(--(A1:A5>2))"), *FA("AR", "T5", "=MAX(E1:E3*10)"), *FA("AR", "T6", "=INDEX(C1:C5,A1:A5)"))
+SHEETS += [("AR", [8] * 30, AR_ROWS), ("AR2", [8] * 50, AR_ROWS)]
+SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
 def sheets(index):
     """The workbook's sheets for the builder: Out, with each test's name in column A of its row, then the rest."""

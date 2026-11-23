@@ -232,6 +232,11 @@ class Book(VBAObject):
     def _manual(self):
         return self.app is not None and self.app.settings.get("calculation") == -4135
 
+    def is_dynamic(self, sheet, r, c):
+        """Whether the cell's formula is a dynamic-array formula (Formula2), whose ranges are taken whole."""
+        info = self._formulas().get((sheet, r, c))
+        return info is not None and info.dynamic
+
     def register_formula(self, sheet, r, c, text, dynamic):
         self._formulas()
         info = self._register(sheet, r, c, text, dynamic, dirty=True)
@@ -364,7 +369,9 @@ class Book(VBAObject):
                 result = PENDING
             else:
                 try:
-                    result = fx.Evaluator(self, key[0], self._read_for_formula).run(info.ast)
+                    sheet, r, c = key
+                    arrays = info.dynamic or (r, c) in sheet.array_cells  # Formula2, or Ctrl+Shift+Enter
+                    result = fx.Evaluator(self, sheet, self._read_for_formula, (r, c), arrays).run(info.ast)
                 except VBANotImplemented as err:
                     result = PENDING
                     if self.app is not None:
@@ -416,21 +423,21 @@ class Book(VBAObject):
         formula entered the old way, with Ctrl+Shift+Enter, shows the first value of either."""
         if not isinstance(result, fx.Array):
             return result
-        if result.rect is not None and (r, c) not in sheet.array_cells:
+        if result.rect is not None and result.extent != (1, 1) and (r, c) not in sheet.array_cells:
             _, r1, c1, r2, c2 = result.rect
             if c1 == c2 and r1 <= r <= r2:
                 return result.cell(r - r1, 0)
             if r1 == r2 and c1 <= c <= c2:
                 return result.cell(0, c - c1)
             return XLError("#VALUE!")
-        return result.rows[0][0] if result.rows and result.rows[0] else None
+        return result.cell(0, 0)
 
     def _spill(self, key, cell, arr):
         """A dynamic-array result fills the cells below and to the right, or shows #SPILL! if one is in use."""
         sheet, r, c = key
         old = sheet.spills.get((r, c))
         self._drop_spill(sheet, (r, c))
-        rows, cols = arr.shape
+        rows, cols = arr.extent  # the whole of it: a range's blank cells spill too, as 0
         new = (r, c, r + rows - 1, c + cols - 1)
         if rows == 0 or cols == 0:
             cell.value, new = XLError("#CALC!"), (r, c, r, c)
@@ -445,7 +452,7 @@ class Book(VBAObject):
         ):
             cell.value, new = XLError("#SPILL!"), (r, c, r, c)
         else:
-            for i, values in enumerate(arr.rows):
+            for i, values in enumerate(arr.full()):
                 for j, v in enumerate(values):
                     if v is None and self.app is not None:
                         self.app.note("SPILL-BLANK-AS-ZERO")

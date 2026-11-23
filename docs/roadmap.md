@@ -18,7 +18,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
 | 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font` (1.1, 1.3, 1.4 and 1.5 are done) | nothing | small, five pieces |
-| 2 | [Worksheet functions](#2-worksheet-functions) | `SUMIFS`, `VLOOKUP(…, TRUE)`, `Application.Match`, `WorksheetFunction.CountIf` | nothing | large, ships in slices |
+| 2 | [Worksheet functions](#2-worksheet-functions) | `SUMIFS`, `VLOOKUP(…, TRUE)`, `Application.Match`, `WorksheetFunction.CountIf` (2.1 is done) | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
 | 5 | [Appearance](#5-appearance) | `Font`, `Interior`, `Borders`, `ColumnWidth`, `Merge` | 1, 4 | large |
@@ -130,6 +130,12 @@ Off by default. *This one is a decision for the maintainers: it trades a faithfu
 In formulas, and from VBA. Large, but it ships in slices; each slice is a family of functions and its probes.
 
 ### 2.1 Groundwork
+
+**Status**: done, recorded from Excel first. What it settled: a range where one value is wanted gives the formula's
+own row or column (in `Formula`), every range is an array (in `Formula2`); array constants stay arrays; `SUMPRODUCT`
+works on arrays and does not round a sum that all but cancels; `IF`, `INDEX` and `XLOOKUP` hand back cells, `IFERROR`
+values; `Formula2` shows `@` where a `Formula` formula takes one value. Left open: where Excel puts `@` around a
+function MacroPress does not model, and arrays of more than two whole columns.
 
 - **Arrays in arithmetic.** `SUMPRODUCT((A1:A9="x")*B1:B9)` needs `=`, `*` and the rest to work cell by cell. Today
   the evaluator refuses a range where one value is wanted.

@@ -37,6 +37,12 @@ The first public release.
   - **Filling**: `FillDown`, `FillUp`, `FillRight`, `FillLeft`; a copy onto a larger range; `AutoFill` of formulas,
     copies and number and date series; `Cut`, with the formulas and names that read the cells following them; and
     `Worksheet.Paste`.
+- Arrays in formulas ([roadmap](docs/roadmap.md), 2.1), recorded from Excel first (42 more tests in the parity
+  suite): a range where one value is wanted gives the formula's own row or column of it, a `Formula2` formula works
+  on whole arrays and spills, array constants, `@`, `SUMPRODUCT`, `ROW`, `COLUMN`, `ROWS`, `COLUMNS` and
+  `CONCATENATE`; `IF`, `INDEX` and `XLOOKUP` hand back cells. `Formula` and `Formula2` show a formula as Excel shows
+  it, `@` and all, and formula text is kept as Excel keeps it. A dynamic-array formula is saved as one, in any
+  workbook.
 
 ### Fixed
 
@@ -99,6 +105,10 @@ Found by running those macros in both Excel and MacroPress and comparing every a
   kept from spilling by an empty cell that only had a format, and the cells it filled lost theirs. A paste or `Clear`
   of whole rows or columns changed their formats in the model but not in the saved copy. `CutCopyMode` with nothing
   copied gave `False` instead of 0.
+- **Found with the arrays in formulas**: `Formula2` read a formula written with `Formula` without the `@` Excel shows
+  in it, and formula text was kept as typed (`=sum(a1)`) where Excel keeps `=SUM(A1)`. A dynamic array that spilled a
+  range left out the range's blank cells past its data. A `Formula2` formula of one value that takes ranges whole
+  was saved as a formula that is not a dynamic array, which Excel then works out another way.
 
 ### Changed
 

@@ -176,7 +176,7 @@ def _sheet(rows):
 
 
 def test_a_formulas_saved_value_stands_until_a_cell_it_reads_changes(tmp_path):
-    cells = '<c r="A1"><v>2</v></c><c r="B1"><f>SUM({1,2})+A1</f><v>5</v></c><c r="C1"><f>A1*3</f></c>'
+    cells = '<c r="A1"><v>2</v></c><c r="B1"><f>SUMIF(A1:A2,"&gt;0")+A1</f><v>5</v></c><c r="C1"><f>A1*3</f></c>'
     path = _workbook(tmp_path / "in.xlsx", {**PARTS, "xl/worksheets/sheet1.xml": _sheet(f'<row r="1">{cells}</row>')})
     # C1 was saved with no value: it is calculated. B1, which the evaluator can't read, keeps its saved value while
     # A1 does, and once A1 changes its value is unknown, not guessed.
@@ -394,6 +394,24 @@ def test_a_cut_takes_names_with_it_and_a_save_stops_where_other_parts_of_the_fil
     path = _workbook(tmp_path / "in2.xlsx", {**PARTS, "xl/worksheets/sheet1.xml": sheet})
     with pytest.raises(VBANotImplemented, match="conditionalFormatting covers"):
         _press(path, tmp_path / "out2.xlsx", 'Range("A1").Cut Range("D4")')
+
+
+def test_a_dynamic_array_formula_is_saved_as_one_and_a_workbook_with_none_is_given_their_metadata(tmp_path):
+    path = _workbook(tmp_path / "in.xlsx")
+    vba = (
+        'Range("A2").Value = 3\nRange("D1").Formula2 = "=A1:A2*2"\nRange("E1").Formula2 = "=SUM(A1:A2*2)"\n'
+        'Range("F1").Formula2 = "=@A1:A2+1"\nRange("G1").Formula2 = "=A1+1"'
+    )
+    saved = _press(path, tmp_path / "out.xlsx", vba)
+    with zipfile.ZipFile(tmp_path / "out.xlsx") as z:
+        xml = z.read("xl/worksheets/sheet1.xml").decode()
+        assert "xl/metadata.xml" in z.namelist() and "sheetMetadata" in z.read("xl/_rels/workbook.xml.rels").decode()
+    # one that spills, and one of one value that takes ranges whole, are dynamic arrays (read as a formula that is
+    # not one, SUM(A1:A2*2) would take one cell of A1:A2); @ is _xlfn.SINGLE; =A1+1 means the same either way
+    assert '<c r="D1" cm="1"><f t="array" ref="D1:D2">A1:A2*2</f>' in xml
+    assert '<c r="E1" cm="1"><f t="array" ref="E1">SUM(A1:A2*2)</f><v>8</v>' in xml
+    assert "<f>_xlfn.SINGLE(A1:A2)+1</f>" in xml and "<f>A1+1</f>" in xml
+    assert [_value(saved, 1, c) for c in (4, 5, 6, 7)] == [2.0, 8.0, 2.0, 2.0]
 
 
 def test_saving_formats_written_dates_and_refuses_a_rename_a_chart_would_miss(tmp_path):

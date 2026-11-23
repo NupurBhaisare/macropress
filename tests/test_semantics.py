@@ -532,6 +532,42 @@ class ExcelModel(Runner):
             self.prints(body, sheets=("One", "Two", "Three")), ["Three 0", "1004 -1", "1004", "1004 0 True"]
         )
 
+    def test_a_range_where_one_value_is_wanted_is_cut_to_the_formulas_row_and_arrays_are_worked_out_whole(self):
+        data = (
+            "For i = 1 To 5\nCells(i, 1).Value = i\nCells(i, 3).Value = i * 10\nNext\n"
+            'Range("B1").Value = "x"\nRange("B2").Value = "yy"\nRange("B3").Value = "x"\nRange("B4").Value = "zzz"\n'
+            'Range("B5").Value = "x"\n'
+        )
+        body = data + (
+            'Range("H2").Formula = "=A1:A5*2"\nRange("H9").Formula = "=A1:A5*2"\nRange("H3").Formula = "=SUM(A1:A5*{1,2})"\n'
+            'Range("H4").Formula = "=SUM(IF(A1:A5>2,C1:C5,0))"\nRange("H5").Formula = "=SUMPRODUCT((B1:B5=""x"")*C1:C5)"\n'
+            'Range("H6").Formula = "=ROW(A2:A4)"\nRange("H7").Formula = "={1,2;3,4}"\nRange("H8").Formula = "=SUM({1,2,3}+{10;20})"\n'
+            'Range("H10").Formula = "=SUM(IF(TRUE,B1,0),1)"\nRange("H11").Formula = "=SUMPRODUCT({0.1,0.2,-0.3},{1,1,1})=0"\n'
+            'Debug.Print Range("H2").Value, IsError(Range("H9").Value), Range("H3").Value, Range("H4").Value, Range("H5").Value\n'
+            'Debug.Print Range("H6").Value, Range("H7").Value, Range("H8").Value, Range("H10").Value, Range("H11").Value\n'
+            'Range("J1").Formula2 = "=A1:A5*2"\nRange("K1").Formula2 = "=SUM(A1:A5*2)"\nRange("L1").Formula2 = "=LEN(B1:B5)"\n'
+            'Debug.Print Range("J5").Value, Range("K1").Value, Range("L4").Value\n'
+            'Debug.Print Range("H2").Formula2, Range("H4").Formula2, Range("H7").Formula2, Range("J1").Formula\n'
+            'Range("M1").Formula = "=sum(a1:a2)+Other!a1"\nRange("M2").Formula2 = "=@A1:A5+1"\n'
+            'Debug.Print Range("M1").Formula, Range("M2").Formula, Range("M2").Value'
+        )
+        # in a formula that is not a dynamic array, a range in arithmetic or where a function wants one value gives
+        # the cell in the formula's own row (#VALUE! where there is none); an array constant stays an array, and IF
+        # hands back the cells it chooses; SUMPRODUCT works on arrays whatever the formula, and does not round to 0
+        self.assertEqual(
+            self.prints(body, sheets=("Sheet1", "Other")),
+            [
+                "4 True 9 150 90",
+                "2 1 102 1 False",
+                "10 30 3",
+                "=@A1:A5*2 =SUM(IF(@A1:A5>2,C1:C5,0)) =@{1,2;3,4} =A1:A5*2",
+                "=SUM(A1:A2)+Other!A1 =A1:A5+1 3",
+            ],
+        )
+        with self.assertRaises(VBARuntimeError) as ctx:  # Excel cannot read it
+            self.prints('Range("A1").Formula = "={1,2;3}"')
+        self.assertEqual(ctx.exception.number, 1004)
+
     def test_a_filter_matches_what_cells_show_and_a_write_reaches_only_the_rows_it_shows(self):
         code = (
             "Function Shown() As String\nFor i = 2 To 7\nShown = Shown & IIf(Rows(i).Hidden, 0, 1)\nNext\nEnd Function\n"

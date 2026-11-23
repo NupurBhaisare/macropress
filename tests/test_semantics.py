@@ -681,6 +681,31 @@ class ExcelModel(Runner):
         with self.assertRaisesRegex(VBANotImplemented, "could not be calculated"):
             self.prints('Range("A1").Formula = "=MATCH(35,{30,10,50})"\nx = Range("A1").Value')
 
+    def test_rounding_dates_text_and_totals_answer_as_excel_does(self):
+        body = (
+            "For i = 1 To 5\nCells(i, 1).Value = 2 ^ (i - 1)\nNext\n"
+            'Range("C1").Formula = "=SUBTOTAL(9,A1:A5)"\nRange("C2").Formula = "=SUBTOTAL(109,A1:A5)"\n'
+            'Range("C3").Formula = "=SUM(C1:C2)"\nRows(2).Hidden = True\n'
+            'Debug.Print Range("C1").Value, Range("C2").Value, Range("C3").Value\n'
+            'Range("D1").Formula = "=DATE(2015,1,31)"\nRange("D2").Formula = "=DATEDIF(D1,DATE(2015,3,1),""md"")"\n'
+            'Range("D3").Formula = "=EOMONTH(D1,1)"\nRange("D4").Formula = "=PMT(0.05/12,360,200000)"\n'
+            'Debug.Print TypeName(Range("D1").Value), Range("D2").Value, TypeName(Range("D3").Value), Range("D3").Value, '
+            'TypeName(Range("D4").Value)\n'
+            'Range("E1").Formula = "=ROUNDDOWN(4.35*100,0)"\nRange("E2").Formula = "=MROUND(1.15,0.1)"\n'
+            'Range("E3").Formula = "=SUBSTITUTE(""aaa"",""aa"",""b"",2)"\nRange("E4").Formula = "=TEXTJOIN(""-"",TRUE,A1:A3)"\n'
+            'Debug.Print Range("E1").Value, Range("E2").Value, Range("E3").Value, Range("E4").Value'
+        )
+        # SUBTOTAL's 109 passes over the hidden row, 9 does not until the sheet is filtered, and a formula reading them
+        # follows; DATE and PMT give their cells a date and a currency format as they are entered, EOMONTH none;
+        # DATEDIF's "md" goes negative past the end of February; ROUNDDOWN works on the number to 15 digits
+        self.assertEqual(self.prints(body), ["31 29 60", "Date -2 Double 42063 Currency", "435 1.2 ab 1-2-4"])
+        # a rate Excel finds by trial stops within its tolerance, where its digits are its own: not guessed
+        with self.assertRaisesRegex(VBANotImplemented, "could not be calculated"):
+            self.prints('Range("A1").Formula = "=IRR({-100,30,40,50})"\nx = Range("A1").Value')
+        # nor is the format of a date and a currency added up
+        with self.assertRaisesRegex(VBANotImplemented, "number format Excel gives"):
+            self.prints('Range("A1").Formula = "=DATE(2024,1,1)+PMT(0.1,10,1000)"')
+
     def test_a_formula_that_wants_one_value_takes_its_own_row_or_column_of_a_range(self):
         body = (
             'Range("F1").Value = 1\nRange("F2").Value = 2\nRange("F3").Value = 3\n'

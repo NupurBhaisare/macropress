@@ -74,8 +74,10 @@ the invoice example's `LowerPrices` allows.
 
 ## Good first issues
 
-- Formula functions that are used everywhere but not calculated yet: `EOMONTH`, `ROUNDUP`, `IFS`, `TEXTJOIN`,
-  `NETWORKDAYS`. The [roadmap](docs/roadmap.md) (group 2) lists their edge cases.
+- Formula functions that are used everywhere but not calculated yet: `TEXT`, `FILTER`, `LET`, `SEQUENCE`. Excel's
+  functions live in [macropress/formula.py](macropress/formula.py) (the core) and
+  [macropress/library.py](macropress/library.py) (the rest), each written to answers recorded from Excel; the
+  [roadmap](docs/roadmap.md) (group 2) lists their edge cases.
 - More `Format` patterns (`"yyyy-mm-dd hh:nn"`, `"0%"`, `"mmm yyyy"`, ...).
 - `Range.Delete` and `Range.Insert`, moving every reference to the cells they move.
 - User-defined types (`Type ... End Type`): today they fail as a converter error, and should at least stop as

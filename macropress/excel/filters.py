@@ -155,3 +155,4 @@ def apply_filter(sheet):
         else:
             sheet.hidden_rows.add(r)
     sheet.changed = True
+    sheet.book.rows_shown_changed(sheet)

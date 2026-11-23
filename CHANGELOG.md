@@ -55,6 +55,19 @@ The first public release.
   function's cells (`A1:INDEX(A:A,5)`). Over values not in order a match is answered only where Excel's search cannot
   land elsewhere. The same from `WorksheetFunction`, which takes VBA arrays as tables; `Index` and `XLookup` hand back
   a `Range`.
+- Rounding, dates, text and the rest ([roadmap](docs/roadmap.md), 2.4), recorded from Excel first (97 more tests in
+  the parity suite, 1,097 answers), in formulas: `ROUNDUP`, `ROUNDDOWN`, `TRUNC`, `CEILING`, `FLOOR` and their newer
+  forms, `MROUND`, `MOD`, `QUOTIENT`, `POWER`, `SQRT`, `LN`, `LOG`, `EXP`, `EVEN`, `ODD`, `PRODUCT`; `DATE`, `YEAR`,
+  `MONTH`, `DAY`, `WEEKDAY`, `EOMONTH`, `EDATE`, `DATEDIF` (its `"md"` as Excel has it), `NETWORKDAYS` and `WORKDAY`
+  with their `.INTL` forms, `YEARFRAC` on its five bases, `DAYS360`, `DAYS`, `WEEKNUM`, `ISOWEEKNUM`, `TIME`, `HOUR`,
+  `MINUTE`, `SECOND`; `FIND`, `SEARCH`, `SUBSTITUTE`, `REPLACE`, `REPT`, `EXACT`, `PROPER`, `TEXTJOIN`, `CHAR`, `CODE`,
+  `CLEAN`, `VALUE`, `N`, `T`; `IFS`, `SWITCH`, `IFNA`, the `IS` functions, `TYPE`, `ERROR.TYPE`; `MEDIAN`, `MODE`,
+  `LARGE`, `SMALL`, `RANK`, `PERCENTILE`, `QUARTILE`, `STDEV`, `VAR`, `COUNTBLANK`; `PMT`, `IPMT`, `PPMT`, `PV`, `FV`,
+  `NPER`, `NPV`, `XNPV`, `SLN`, `SYD`, `DB`, `DDB`; and `SUBTOTAL` and `AGGREGATE`, which pass over hidden rows and
+  nested totals as Excel does and are worked out again when rows are hidden, shown or filtered. A formula entered in
+  a General cell takes the number format Excel gives it (`DATE` a date, `PMT` a currency, `IRR` a percentage), so its
+  `Value` is a `Date` or a `Currency` as in Excel. `IRR`, `XIRR` and `RATE`, whose answers stop wherever Excel's
+  search took them, are left for Excel.
 
 ### Fixed
 
@@ -72,6 +85,10 @@ Found by running those macros in both Excel and MacroPress and comparing every a
 - **Errors**: a member asked of a value that is no object is error 424, and of `Nothing` error 91, where the run used
   to stop with a fault of the converter. A constant MacroPress does not know (`vbSomething`) is refused, where it used
   to be read as an empty variable. A procedure that calls itself without end stops with error 28.
+- **Formulas entered by a macro**: `=TODAY()` and `=NOW()` take Excel's date formats, where the cell stayed General;
+  a function given the wrong number of arguments, or `#SPILL!` or `#CALC!` typed in, is refused as Excel refuses it;
+  the file keeps `_xlfn.` before the names Excel needs it on (`CEILING.MATH`, `STDEV.S`, `AGGREGATE`, ...), where
+  Excel would have shown `#NAME?`.
 - **Formulas**: numbers are compared to 15 significant digits, as Excel compares them (`=0.1+0.2=0.3` is TRUE), and a
   formula or a `SUM` that ends on a sum which all but cancels gives 0 (`=0.1+0.2-0.3`). `INT` and `ROUND` work on the
   15-digit number (`=INT(4.35*100)` is 435). A number written with more than 15 digits keeps the first 15. An odd root

@@ -693,6 +693,7 @@ class Sheet(VBAObject):
         for r in range(af.r1 + 1, af.r2 + 1):
             self.hidden_rows.discard(r)
         self.changed = True
+        self.book.rows_shown_changed(self)
 
     def remove_autofilter(self):
         af = self.autofilter
@@ -700,6 +701,7 @@ class Sheet(VBAObject):
             self.hidden_rows.discard(r)
         self.autofilter = None
         self.changed = True
+        self.book.rows_shown_changed(self)
 
     def m_calculate(self):
         self.book.recalc_all()

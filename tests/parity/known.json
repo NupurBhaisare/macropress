@@ -106,7 +106,7 @@
    }
   },
   {
-   "why": "The name of Excel's own short date format. The Mac that recorded the answers names it m/d/yy, by its regional settings; MacroPress names it m/d/yyyy, as NumberFormat does under US settings.",
+   "why": "The name of Excel's own short date format. The Mac that recorded the answers names it m/d/yy (and m/d/yy h:mm), by its regional settings; MacroPress names it m/d/yyyy (and m/d/yyyy h:mm), as NumberFormat does under US settings.",
    "tests": {
     "T_dfmt07": {
      "2": "[m/d/yyyy h:mm]"
@@ -179,6 +179,54 @@
     },
     "T_timecell": {
      "4": "[m/d/yyyy h:mm]"
+    },
+    "T_wd_formats": {
+     "1": "[m/d/yyyy]",
+     "2": "[m/d/yyyy]",
+     "3": "[m/d/yyyy h:mm]",
+     "8": "[m/d/yyyy]"
+    },
+    "T_wd_formats2": {
+     "10": "[m/d/yyyy]",
+     "13": "[m/d/yyyy]",
+     "15": "[m/d/yyyy]"
+    },
+    "T_wd_formats3": {
+     "1": "[m/d/yyyy]",
+     "2": "[m/d/yyyy]",
+     "4": "[m/d/yyyy]",
+     "5": "[m/d/yyyy]",
+     "12": "[m/d/yyyy]",
+     "14": "[m/d/yyyy]"
+    },
+    "T_wd_formats4": {
+     "7": "[m/d/yyyy]",
+     "8": "[m/d/yyyy]",
+     "9": "[m/d/yyyy]"
+    },
+    "T_wd_formats5": {
+     "11": "[m/d/yyyy]",
+     "14": "[m/d/yyyy h:mm]"
+    },
+    "T_wd_formats6": {
+     "1": "[m/d/yyyy]",
+     "2": "[m/d/yyyy]",
+     "3": "[m/d/yyyy]",
+     "5": "[m/d/yyyy h:mm]",
+     "6": "[m/d/yyyy]",
+     "10": "[m/d/yyyy]",
+     "12": "[m/d/yyyy]",
+     "14": "[m/d/yyyy]",
+     "15": "[m/d/yyyy]"
+    },
+    "T_wd_formats7": {
+     "5": "[m/d/yyyy]",
+     "6": "[m/d/yyyy]",
+     "7": "[m/d/yyyy h:mm]",
+     "8": "[m/d/yyyy h:mm]"
+    },
+    "T_wd_formats8": {
+     "11": "[m/d/yyyy h:mm]"
     }
    }
   },
@@ -189,7 +237,41 @@
      "2": 1004.0,
      "4": 1004.0,
      "5": "[Out]",
-     "6": "[Integer:165]"
+     "6": "[Integer:180]"
+    }
+   }
+  },
+  {
+   "why": "The format a formula takes from the cells it reads. Entered in a General cell, =A1, =A1+1, =MAX(A1:A3), =SUM(A1:A3) and =AVERAGE(A1:A3) take the date format of A1; MacroPress gives the formats of DATE, TIME, NOW, TODAY, PMT, IRR and the like, and leaves a formula that calls none of them General (not modelled yet).",
+   "tests": {
+    "T_wd_formats": {
+     "10": "[General]",
+     "11": "[General]",
+     "15": "[General]"
+    },
+    "T_wd_formats3": {
+     "9": "[General]"
+    },
+    "T_wd_formats5": {
+     "12": "[General]"
+    }
+   }
+  },
+  {
+   "why": "The last digit of PPMT. Excel's PPMT differs in its 15th digit from PMT less IPMT, worked out any way MacroPress was tried with; the 12 digits a cell shows agree.",
+   "tests": {
+    "T_fi_pmt": {
+     "7": "[Double:-240.309912690943]",
+     "14": "[Double:-241.813413078146]"
+    }
+   }
+  },
+  {
+   "why": "CHAR and CODE past 127. Excel for Mac reads those codes as Mac Roman (CHAR(233) is È, CODE(\"é\") 142); Excel for Windows, and MacroPress, as Windows-1252 (é, 233).",
+   "tests": {
+    "T_tx_code": {
+     "7": "[String:é]",
+     "8": "[Double:233]"
     }
    }
   }
@@ -221,16 +303,27 @@
   "T_cut_sheets_range": "a cut that moves part of the range 'CT11'!A1:A2 a formula re",
   "T_ddiff1": "DateDiff interval 'q'",
   "T_ddiff2": "DateDiff interval 'ww'",
-  "T_h031": "reading FX!AH31: a formula whose value could not be calculat",
-  "T_h032": "reading FX!AH32: a formula whose value could not be calculat",
-  "T_h033": "reading FX!AH33: a formula whose value could not be calculat",
-  "T_h036": "reading FX!AH36: a formula whose value could not be calculat",
-  "T_h039": "reading FX!AH39: a formula whose value could not be calculat",
+  "T_fi_irr": "reading FI!K1: a formula whose value could not be calculated",
+  "T_fi_trial1": "reading FI!O1: a formula whose value could not be calculated",
+  "T_fi_trial10": "reading FI!O10: a formula whose value could not be calculate",
+  "T_fi_trial11": "reading FI!O11: a formula whose value could not be calculate",
+  "T_fi_trial12": "reading FI!O12: a formula whose value could not be calculate",
+  "T_fi_trial13": "reading FI!O13: a formula whose value could not be calculate",
+  "T_fi_trial14": "reading FI!O14: a formula whose value could not be calculate",
+  "T_fi_trial15": "reading FI!O15: a formula whose value could not be calculate",
+  "T_fi_trial16": "reading FI!O16: a formula whose value could not be calculate",
+  "T_fi_trial17": "reading FI!O17: a formula whose value could not be calculate",
+  "T_fi_trial2": "reading FI!O2: a formula whose value could not be calculated",
+  "T_fi_trial3": "reading FI!O3: a formula whose value could not be calculated",
+  "T_fi_trial4": "reading FI!O4: a formula whose value could not be calculated",
+  "T_fi_trial5": "reading FI!O5: a formula whose value could not be calculated",
+  "T_fi_trial6": "reading FI!O6: a formula whose value could not be calculated",
+  "T_fi_trial7": "reading FI!O7: a formula whose value could not be calculated",
+  "T_fi_trial8": "reading FI!O8: a formula whose value could not be calculated",
+  "T_fi_trial9": "reading FI!O9: a formula whose value could not be calculated",
   "T_h064": "reading FX!AH64: a formula whose value could not be calculat",
-  "T_h073": "reading FX!AH73: a formula whose value could not be calculat",
   "T_h077": "reading FX!AH77: a formula whose value could not be calculat",
-  "T_h089": "reading FX!AH89: a formula whose value could not be calculat",
-  "T_h103": "reading FX!AH103: a formula whose value could not be calcula",
+  "T_in_whole_irr": "reading IN!N30: a formula whose value could not be calculate",
   "T_isnum1": "reading '$5' as a number: whether VBA takes a currency sign ",
   "T_isnumb0": "reading '($5)' as a number: whether VBA takes a currency sig",
   "T_isnumb3": "reading '$ 5' as a number: whether VBA takes a currency sign",
@@ -249,6 +342,7 @@
   "T_text4": "the displayed text of FX!M3: 0.08 in the number format 0%",
   "T_text5": "the displayed text of S!AB3: 45296 in the number format m/d/",
   "T_text6": "the displayed text of S!AB5: 123456789012 in the number form",
+  "T_tx_code2": "reading TT!N1: a formula whose value could not be calculated",
   "T_txt01": "the displayed text of B4!F1: 1234.56789 may not fit its colu",
   "T_txt02": "the displayed text of B4!F2: 123456789 may not fit its colum",
   "T_txt03": "the displayed text of B4!F3: 12345678901 may not fit its col",
@@ -282,6 +376,7 @@
   "T_w44": "writing '3 pm' to a cell: Excel turns it into a date or a ti",
   "T_w57": "writing '1/0' to a cell: Excel turns it into a date or a tim",
   "T_w58": "writing 'Feb 2024' to a cell: Excel turns it into a date or ",
+  "T_wd_text": "reading DT!G20: a formula whose value could not be calculate",
   "T_wsfn2": "WorksheetFunction.Count is not modelled",
   "T_x02": "writing 'Jan 2024' to a cell: Excel turns it into a date or ",
   "T_x13": "writing '1/2 ' to a cell: Excel turns it into a date or a ti",

@@ -1,6 +1,7 @@
 """Workbook: its sheets and names, and keeping its formulas calculated as cells change."""
 
 import math
+import re
 
 from .. import formula as fx
 from ..errors import VBANotImplemented, VBARuntimeError
@@ -18,6 +19,8 @@ from .constants import MAX_COL, MAX_ROW, PENDING
 from .protection import BookProtection, Password, check_password
 from .sheet import Sheet
 from .storage import Cell
+
+_TOTALS = re.compile(r"(?i)\b(?:_xlfn\.)?(?:SUBTOTAL|AGGREGATE)\(")
 
 # ---------------------------------------------------------------------------
 # Workbook and sheets
@@ -123,6 +126,7 @@ class Book(VBAObject):
         self.stale = set()  # formulas whose inputs changed under manual calculation: they show their old values
         self._dirty_on, self._dirty_spills = {}, {}  # sheet -> its dirty formulas; its dirty dynamic arrays
         self._by_sheet, self._readers, self._always = {}, {}, set()
+        self._totals = set()  # formulas that call SUBTOTAL or AGGREGATE: they pass over hidden rows, and each other
         self._evaluating = set()
         self._storing = False  # a formula's own result is being stored (see cells_changed)
         self._spill_writer = None
@@ -142,6 +146,7 @@ class Book(VBAObject):
         """Every formula in the book, parsed once, with the cells it reads."""
         if self.formula_index is None:
             self.formula_index, self._by_sheet, self._readers, self._always = {}, {}, {}, set()
+            self._totals = set()
             for sheet in self.sheets:
                 for r, row in sheet.rows.items():
                     for c, cell in row.items():
@@ -162,6 +167,8 @@ class Book(VBAObject):
             info.volatile = bool(VOLATILE & fx.function_names(info.ast))
         except VBANotImplemented as err:  # not evaluated: it keeps its saved value until a cell it reads changes
             info.error, info.precedents = str(err), self._named_precedents(sheet, text)
+        if {"SUBTOTAL", "AGGREGATE"} & fx.function_names(info.ast) if info.ast else _TOTALS.search(text):
+            self._totals.add(key)
         self.formula_index[key] = info
         self._by_sheet.setdefault(sheet, set()).add(key)
         if dirty:
@@ -234,6 +241,25 @@ class Book(VBAObject):
         self._unwatch(key)
         del self.formula_index[key]
         self._by_sheet.get(key[0], set()).discard(key)
+        self._totals.discard(key)
+
+    def nested_totals(self, sheet, r1, c1, r2, c2):
+        """The cells of a rectangle whose formulas call SUBTOTAL or AGGREGATE anywhere: the totals those two pass over
+        (=SUBTOTAL(9,A1:A5)*2 is one)."""
+        self._formulas()
+        return {key[1:] for key in self._totals if key[0] is sheet and r1 <= key[1] <= r2 and c1 <= key[2] <= c2}
+
+    def rows_shown_changed(self, sheet):
+        """Rows of `sheet` were hidden or shown, or its filter changed: SUBTOTAL and AGGREGATE over them, which pass
+        over hidden rows, are stale, and so is whatever reads them."""
+        if self.formula_index is None:
+            return
+        for key in list(self._totals):
+            info = self.formula_index.get(key)
+            if info is None or key in self.dirty or key in self.stale:
+                continue
+            if info.precedents is None or any(p[0] is sheet for p in info.precedents):
+                self.cells_changed(*self._stale(key))
 
     def _manual(self):
         return self.app is not None and self.app.settings.get("calculation") == -4135

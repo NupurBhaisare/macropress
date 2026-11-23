@@ -18,7 +18,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
 | 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font` (1.1, 1.3, 1.4 and 1.5 are done) | nothing | small, five pieces |
-| 2 | [Worksheet functions](#2-worksheet-functions) | `Application.Match`, `ROUNDUP`, `EOMONTH`, `FILTER`, `LET` (2.1 to 2.3 are done) | nothing | large, ships in slices |
+| 2 | [Worksheet functions](#2-worksheet-functions) | `Application.Match`, `FILTER`, `LET` (2.1 to 2.4 are done) | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
 | 5 | [Appearance](#5-appearance) | `Font`, `Interior`, `Borders`, `ColumnWidth`, `Merge` | 1, 4 | large |
@@ -197,6 +197,19 @@ another workbook, which may or may not be open.
 
 ### 2.4 Rounding, dates, text, the rest
 
+**Status**: done, recorded from Excel first, in formulas (from VBA is 2.5). What it settled: `ROUNDUP`, `FLOOR` and
+the like work on the 15-digit number, `QUOTIENT` and `MOD` do not, and `MOD` is the remainder itself, `#NUM!` past a
+quotient of 1.1E+12 to 1.2E+12. `DATEDIF`'s `"md"` goes past the end of the month before the end date and comes out
+negative, and its `"yd"` moves the start into the end's year, or the end into the year after the start's. A date's time
+is rounded to the second. The functions from the Analysis ToolPak refuse `TRUE` and a range of several cells.
+`SUBTOTAL`'s 1 to 11 pass over every hidden row while the sheet is filtered, none while it is not. Excel raises to a
+whole power by repeated squaring, which its finance functions' last digits show, and works out a variance from the sum
+of squares unless that cancels. A formula entered in a General cell takes a format from `DATE`, `PMT`, `IRR` and the
+like, through `ROUND`, `SUM` and `+`. The file keeps `_xlfn.` before the 2010 and 2013 names, not before
+`ISO.CEILING` or the `.INTL` ones. Left open: `IRR`, `XIRR` and `RATE`, whose answers stop within Excel's tolerance
+wherever its search took them (refused, but for cash flows that never change sign); `PPMT`'s 15th digit; the format a
+formula takes from the cells it reads (group 4); fractional periods in `DB` and `DDB`; text that reads as a date.
+
 - **Rounding**: `ROUNDUP`, `ROUNDDOWN`, `TRUNC`, `MROUND`, `CEILING`, `FLOOR` and their newer forms work on the
   15-digit number (checked for four of them); `MOD` does not. Signs in `CEILING` and `FLOOR`: **probe**.
 - **`SUBTOTAL` and `AGGREGATE`** pass over rows a filter hides, and with 101 to 111 rows hidden by hand; they pass
@@ -308,6 +321,12 @@ One reader of format codes, used by `Range.Text`, filters, `Find`, the `TEXT` fu
 - **`Format()`** is its own dialect: `n` for minutes, named formats (`"Currency"`, `"Percent"`, `"Short Date"`,
   `"Yes/No"`), `q`, `w`, `ww`, `y`, and `<`, `>`, `@`, `&`, `!` for text. Named formats and separators go by US
   settings.
+- **The format a formula takes from the cells it reads.** Entered in a General cell, `=A1`, `=A1+1`, `=MAX(A1:A3)`,
+  `=SUM(A1:A3)` and `=AVERAGE(A1:A3)` take A1's format (checked for a date), `=A1*1`, `=A1-A2` and `=A1+A2` of two
+  dates do not. MacroPress gives the formats of `DATE`, `PMT` and the functions 2.4 settled, and leaves the rest
+  General, so `Value` of such a cell is a `Double` where Excel gives a `Date` or a `Currency`. **Probe** other formats
+  (`0.00`, percentages, currencies) through `+`, `*` and the functions that keep a format, and where two cells read
+  have different ones.
 
 ## 5. Appearance
 

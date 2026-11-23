@@ -3,7 +3,7 @@
 import datetime as dt
 from decimal import ROUND_HALF_UP, Decimal
 
-from .. import entry, formula as fx
+from .. import entry, formula as fx, library
 from ..errors import VBANotImplemented, VBARuntimeError
 from ..numfmt import (
     CURRENCY_VALUE,
@@ -236,6 +236,8 @@ class Range(VBAObject):
                 stored, formula, fmt = cell
                 if formula is not None:
                     formula = shift_formula(formula, r - self.r1, c - self.c1)
+                    if fmt is None and self.sheet.format_at(r, c) is None:
+                        fmt = self._format_brought(formula)
                 self.sheet.put(r, c, stored, formula, fmt)
 
     def _write_array(self, arr, r1, c1, r2, c2, plain=False):
@@ -334,13 +336,28 @@ class Range(VBAObject):
         _check_formula(at(self.r1, self.c1))
         areas = self._written_areas()
         self._guard_contents(areas)
+        brought = {(r, c): self._format_brought(at(r, c)) for r1, c1, r2, c2 in areas for r in range(r1, r2 + 1)
+                   for c in range(c1, c2 + 1) if self.sheet.format_at(r, c) is None}  # fmt: skip
         for r1, c1, r2, c2 in areas:
             for r in range(r1, r2 + 1):
                 for c in range(c1, c2 + 1):
                     if self.sheet.format_at(r, c) == TEXT:
                         self.sheet.put(r, c, text)  # a cell formatted as Text keeps the formula as text
                     else:
-                        self.sheet.put(r, c, PENDING, at(r, c), dynamic=dynamic)
+                        self.sheet.put(r, c, PENDING, at(r, c), brought.get((r, c)), dynamic=dynamic)
+
+    def _format_brought(self, formula):
+        """The number format a General cell takes as `formula` is entered in it (see library.entered_format)."""
+        book, sheet = self.sheet.book, self.sheet
+
+        def format_of(node):
+            try:
+                ref_sheet, r, c = book._evaluator(sheet).rect_of(node)[:3]
+            except fx._Err:
+                return None
+            return ref_sheet.format_at(r, c)
+
+        return library.entered_format(formula, format_of)
 
     def let_formula(self, value):
         """Formula: a formula that returns one value (an array result gives its top-left value)."""
@@ -547,6 +564,8 @@ class Range(VBAObject):
             if target is self.sheet.hidden_rows:
                 (self.sheet.manual_hidden.add if hide else self.sheet.manual_hidden.discard)(i)
         self.sheet.changed = True
+        if target is self.sheet.hidden_rows:
+            self.sheet.book.rows_shown_changed(self.sheet)
 
     def get_end(self, direction):
         """Ctrl+arrow from the range's first cell: to the end of the filled cells it is in, or to the next filled

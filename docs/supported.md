@@ -163,13 +163,20 @@ formula or a `SUM` that ends on a sum which all but cancels gives 0, text in ari
 (`="5%"+1`), and `SUM`, `COUNT` and the like count text and logical values written in the formula but pass over
 those read from cells.
 
-Functions: ABS, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, CHOOSE, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA,
-COUNTIF, COUNTIFS, HLOOKUP, IF, IFERROR, INDEX, INDIRECT, INT, ISBLANK, ISNUMBER, ISTEXT, LEFT, LEN, LOOKUP, LOWER,
-MATCH, MAX, MAXIFS, MID, MIN, MINIFS, NOT, NOW, OFFSET, OR, RIGHT, ROUND, ROW, ROWS, SORT, SUM, SUMIF, SUMIFS,
-SUMPRODUCT, TODAY, TRIM, UNIQUE, UPPER, VLOOKUP, XLOOKUP, XMATCH. Arithmetic, comparison and `&` operators,
-references to other sheets, defined names, whole rows and columns, ranges that end on a function's cells
-(`A1:INDEX(A:A,5)`), array constants (`{1,2;3,4}`), and dynamic arrays that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are
-all calculated.
+Functions: ABS, AGGREGATE, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, CEILING, CEILING.MATH, CEILING.PRECISE, CHAR, CHOOSE,
+CLEAN, CODE, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA, COUNTBLANK, COUNTIF, COUNTIFS, DATE, DATEDIF, DAY,
+DAYS, DAYS360, DB, DDB, EDATE, EOMONTH, ERROR.TYPE, EVEN, EXACT, EXP, FIND, FLOOR, FLOOR.MATH, FLOOR.PRECISE, FV,
+HLOOKUP, HOUR, IF, IFERROR, IFNA, IFS, INDEX, INDIRECT, INT, IPMT, ISBLANK, ISERR, ISERROR, ISEVEN, ISLOGICAL, ISNA,
+ISNONTEXT, ISNUMBER, ISO.CEILING, ISODD, ISOWEEKNUM, ISREF, ISTEXT, LARGE, LEFT, LEN, LN, LOG, LOG10, LOOKUP, LOWER,
+MATCH, MAX, MAXIFS, MEDIAN, MID, MIN, MINIFS, MINUTE, MOD, MODE, MODE.SNGL, MONTH, MROUND, N, NA, NETWORKDAYS,
+NETWORKDAYS.INTL, NOT, NOW, NPER, NPV, ODD, OFFSET, OR, PERCENTILE, PERCENTILE.EXC, PERCENTILE.INC, PI, PMT, POWER,
+PPMT, PRODUCT, PROPER, PV, QUARTILE, QUARTILE.EXC, QUARTILE.INC, QUOTIENT, RANK, RANK.AVG, RANK.EQ, REPLACE, REPT,
+RIGHT, ROUND, ROUNDDOWN, ROUNDUP, ROW, ROWS, SEARCH, SECOND, SIGN, SLN, SMALL, SORT, SQRT, STDEV, STDEV.P, STDEV.S,
+STDEVP, SUBSTITUTE, SUBTOTAL, SUM, SUMIF, SUMIFS, SUMPRODUCT, SWITCH, SYD, T, TEXTJOIN, TIME, TODAY, TRIM, TRUNC,
+TYPE, UNICHAR, UNICODE, UNIQUE, UPPER, VALUE, VAR, VAR.P, VAR.S, VARP, VLOOKUP, WEEKDAY, WEEKNUM, WORKDAY,
+WORKDAY.INTL, XLOOKUP, XMATCH, XNPV, YEAR, YEARFRAC. Arithmetic, comparison and `&` operators, references to other
+sheets, defined names, whole rows and columns, ranges that end on a function's cells (`A1:INDEX(A:A,5)`), array
+constants (`{1,2;3,4}`), and dynamic arrays that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
 
 **Ranges and arrays** are worked out as Excel works them out:
 
@@ -228,12 +235,61 @@ all calculated.
   (`=SUM(A1:A5*2)` from `Formula2`), which read the other way would take one cell of them. A workbook that has no
   dynamic arrays yet is given the part of the file Excel keeps them in. `@` is saved as Excel saves it.
 
+**Rounding, dates, text and the rest** answer as Excel does (group 2.4 of the [roadmap](roadmap.md)):
+
+- **Rounding**: `ROUNDUP`, `ROUNDDOWN`, `TRUNC`, `CEILING`, `FLOOR` and their `.MATH` and `.PRECISE` forms, and
+  `MROUND` work on the number to 15 digits (`=ROUNDDOWN(4.35*100,0)` is 435, `=FLOOR(0.3,0.1)` 0.3); `QUOTIENT` and
+  `MOD` on the number as it is (`=QUOTIENT(4.35*100,1)` is 434). `MOD` is the remainder itself, and `#NUM!` once the
+  quotient passes about 1.1E+12. A number and a step of other signs are `#NUM!` in `MROUND`; in `CEILING` a negative
+  number with a positive step goes up, toward 0.
+- **Dates** are serial numbers in Excel's 1900 system, whose 29th of February 1900 (serial 60) `DATE`, `YEAR`,
+  `MONTH`, `DAY` and `WEEKDAY` keep; `EOMONTH` and `EDATE` count months by the calendar. `DATE` rolls months and days
+  over and reads a year below 1900 as that many after it; a date's time of day is rounded to the second
+  (`=DAY(59.99999999)` is 29). `DATEDIF`'s `"md"` goes negative as Excel's does (31 January to 1 March 2015 is -2), and
+  `"yd"` counts as Excel's counts; `YEARFRAC` takes its five bases, `DAYS360` the US and European rules, `NETWORKDAYS`
+  and `WORKDAY` holidays and, in their `.INTL` forms, other weekends. `HOUR`, `MINUTE`, `SECOND`, `TIME`, `WEEKNUM`,
+  `ISOWEEKNUM` and `DAYS` too. Text that Excel reads as a date by regional settings (`=YEAR("2024-01-05")`) leaves the
+  formula for Excel.
+- The functions that came from the Analysis ToolPak (`EOMONTH`, `EDATE`, `WORKDAY`, `NETWORKDAYS` and their `.INTL`
+  forms, `YEARFRAC`, `WEEKNUM`, `MROUND`, `QUOTIENT`, `ISEVEN`, `ISODD`) take text that reads as a number but not
+  `TRUE`, and are `#VALUE!` given a range of several cells in a formula that is not a dynamic array
+  (`=EOMONTH(A1:A3,0)`), where other functions take the formula's own row of it.
+- **Text**: `FIND` (case counts, no wildcards), `SEARCH`, `SUBSTITUTE` (the nth searched for from the character after
+  each found: `=SUBSTITUTE("aaa","aa","b",2)` is "ab"), `REPLACE`, `REPT`, `EXACT`, `PROPER` (a letter after anything
+  but a letter in capitals: "It'S"), `TEXTJOIN`, `CLEAN`, `VALUE`, `N`, `T`, `UNICHAR` and `UNICODE`. `CHAR` and `CODE`
+  read codes 128 to 255 as Windows does (Windows-1252), where Excel for Mac reads them as Mac Roman. A result of more
+  than 32,767 characters is `#VALUE!`.
+- **Logic and information**: `IFS` (no condition that holds is `#N/A`), `SWITCH` (compared as `=` compares; then the
+  default, or `#N/A`), `IFNA`, the `IS` functions, `ERROR.TYPE`, `TYPE` and `NA`.
+- **Statistics**: `MEDIAN`, `MODE` (the first value to reach the count), `LARGE` and `SMALL` (a k with a fraction is
+  rounded up), `RANK` in its three forms, `PERCENTILE` and `QUARTILE` in theirs, `STDEV` and `VAR` in theirs, and
+  `COUNTBLANK` (which counts `""`). A variance has Excel's last digits: from the sum and the sum of squares, unless
+  those cancel to nothing; where the two ways part by more than a last digit, the formula is left for Excel.
+- **Finance**: `PMT`, `IPMT`, `PPMT`, `PV`, `FV`, `NPER`, `NPV`, `XNPV`, `SLN`, `SYD`, `DB` and `DDB`, worked out with
+  Excel's own arithmetic (a whole power by repeated squaring) to the last digit, all but `PPMT`'s 15th. `IRR`, `XIRR`
+  and `RATE` are found by trial, and Excel stops within its tolerance of the rate, where its search took it (two
+  guesses give two answers that part in the 10th digit): MacroPress leaves them for Excel, but for cash flows that
+  never change sign, which are `#NUM!`.
+- **`SUBTOTAL` and `AGGREGATE`** pass over the cells whose formulas call either of them. `SUBTOTAL`'s 1 to 11 pass over
+  every hidden row while the sheet is filtered, and none while it is not; 101 to 111 pass over hidden rows always;
+  hidden columns count. `AGGREGATE` takes its 19 functions and 8 options, and an array it works out
+  (`=AGGREGATE(15,6,A1:A9/(B1:B9="x"),1)`). Hiding or showing a row, or filtering, makes them, and what reads them,
+  stale, as a change to a cell they read does.
+- **A formula's number format.** Entered in a General cell, a formula takes the format of the function its value comes
+  from, as in Excel: `DATE` and `TODAY` a date, `NOW` a date and time, `TIME` a time, `PMT`, `PV`, `FV`, `NPV` and the
+  like a currency, `IRR` and `RATE` a percentage, so that `Value` reads a `Date` or a `Currency`. `ROUND`, `MAX`, `SUM`
+  and a few more keep the format of what they are given, as do `+` and `-` (a date and a number make a date, two
+  dates the days between, General); `IF`, `ABS`, `YEAR`, `*` and `/` give none. A cell with a format of its own keeps
+  it. Where Excel's choice is not known (`=DATE(2024,1,1)+PMT(...)`) writing the formula stops the run. A formula that
+  calls none of these functions stays General, where Excel may give it the format of a cell it reads (`=A1+1`): not
+  modelled yet.
+
 Formulas can be written and read R1C1 style (`FormulaR1C1`, `Formula2R1C1`): one text written to many cells gives
 each its own formula, and a relative reference that runs off the sheet comes round from its other edge, as in Excel.
 `Formula` reads R1C1 text too where A1 style cannot (`=R1C1`). An A1 reference given to `FormulaR1C1`, which Excel
 turns into a name that cannot exist (`='A1'+1`), stops the run.
 
-A formula using any other function (`TEXT`, `ROUNDUP`, `EOMONTH`, ...), or text that Excel would read by regional
+A formula using any other function (`TEXT`, `IRR`, `FILTER`, ...), or text that Excel would read by regional
 settings (a date, a currency sign) does not stop the run. It is saved without a value, for Excel to calculate, and the
 report names it (`FORMULA-NOT-EVALUATED`). A macro that then reads that formula's value does stop, since its value is
 unknown.

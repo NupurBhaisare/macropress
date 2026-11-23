@@ -55,7 +55,10 @@ def pieces(text):
 
 BIN_PREC = {"=": 1, "<>": 1, "<": 1, ">": 1, "<=": 1, ">=": 1, "&": 2, "+": 3, "-": 3, "*": 4, "/": 4, "^": 5}
 
-# Functions newer than Excel 2007 are stored in the file with a prefix (Excel shows #NAME? without it).
+# Functions newer than Excel 2007 are stored in the file with a prefix (Excel shows #NAME? without it). These were
+# checked against a file Excel saved; ISO.CEILING, NETWORKDAYS.INTL and WORKDAY.INTL have none.
+_NEWER_2010_2013 = """CEILING.MATH FLOOR.MATH CEILING.PRECISE FLOOR.PRECISE DAYS ISOWEEKNUM UNICHAR UNICODE RANK.EQ RANK.AVG
+    STDEV.S STDEV.P VAR.S VAR.P MODE.SNGL PERCENTILE.INC PERCENTILE.EXC QUARTILE.INC QUARTILE.EXC AGGREGATE"""
 FILE_PREFIX = {
     "SORT": "_xlfn._xlws.SORT",
     "FILTER": "_xlfn._xlws.FILTER",
@@ -73,6 +76,7 @@ FILE_PREFIX = {
     "MINIFS": "_xlfn.MINIFS",
     "IFNA": "_xlfn.IFNA",
     "SINGLE": "_xlfn.SINGLE",
+    **{name: "_xlfn." + name for name in _NEWER_2010_2013.split()},
 }
 
 
@@ -271,11 +275,9 @@ def _implicit(tree, spans, size, top="top"):
             if place in ("top", "value", "operand") and (kind == "range" or size(node) != (1, 1)):
                 sites.append(node)
             return
-        if kind == "array":  # an array stays one, but one a formula ends on is shown with @
-            if place == "top" and many(node):
+        if kind == "array":  # an array stays one, but where one value is wanted it is shown with @ (=ROUND(@{1,2},0))
+            if place in ("top", "value") and many(node):
                 sites.append(node)
-            elif place == "value" and many(node):
-                raise _Unsure
             return
         if kind in ("neg", "pct", "paren"):
             return walk(node[1], "operand" if place in ("top", "value") and kind != "paren" else place)
@@ -321,6 +323,10 @@ def _implicit(tree, spans, size, top="top"):
                 letter = takes[min(i, len(takes) - 1)] if takes else None
                 if letter is None and a[0] in ("ref", "name") and size(a) != (1, 1) and name not in FUNCTIONS:
                     raise _Unsure  # how a function we do not model takes a range is not known
+                if letter == "w":  # a range whole, anything else one value: =EOMONTH(A1:A3,0), =EOMONTH(@{1,2},0)
+                    letter = "r" if a[0] in ("ref", "name", "range") else "v"
+                elif letter == "o":
+                    letter = "v"
                 walk(a, "value" if letter == "v" else "array" if letter == "a" else "ref")
             return
 
@@ -1124,6 +1130,16 @@ class Evaluator:
             return self.one(v)
         return v
 
+    def taken_whole(self, node):
+        """A value for a function that came from the Analysis ToolPak (TAKES "w"): in a formula that is not a dynamic
+        array a range is taken whole, and several cells are #VALUE!; an array gives its first value."""
+        v = self.ev(node)
+        if isinstance(v, Array) and not self.arrays:
+            if v.rect is not None and v.extent != (1, 1):
+                return XLError("#VALUE!")
+            return v.cell(0, 0)
+        return v
+
     def whole(self, node):
         """An argument worked out as an array, whatever the formula: SUMPRODUCT's."""
         saved, self.arrays = self.arrays, True
@@ -1141,12 +1157,16 @@ class Evaluator:
         takes = TAKES.get(name, "r")
         given, arrays = list(args), {}
         for i, a in enumerate(args):
-            if takes[min(i, len(takes) - 1)] != "v" or a[0] == "missing":
+            letter = takes[min(i, len(takes) - 1)]
+            if letter not in "vwo" or a[0] == "missing":
                 continue
             try:
-                v = self.operand(a)
+                v = self.taken_whole(a) if letter == "w" else self.operand(a)
             except _Err as e:
                 v = e.err
+            if letter == "o":
+                given[i] = ("const", v)
+                continue
             if _many(v):
                 arrays[i] = v
             else:
@@ -1182,8 +1202,9 @@ class Evaluator:
 # not a dynamic array, a range gives the formula's own row or column of it; an array, and a range in a dynamic array,
 # is gone through value by value, the result an array); r, a reference or an array, taken whole; a, the same, and an
 # expression there is worked out as an array whatever the formula (INDEX((A1:A9=1)*B1:B9, 0) needs no Ctrl+Shift+Enter,
-# MATCH(TRUE, A1:A9>1, 0) does). A function not here takes all as r; IF, CHOOSE and SUMPRODUCT take theirs
-# themselves.
+# MATCH(TRUE, A1:A9>1, 0) does); w, one value for the functions that came from the Analysis ToolPak, which take a
+# range whole and are #VALUE! given several cells (library.py has them); o, one value of a range, an array kept
+# whole (TYPE's). A function not here takes all as r; IF, CHOOSE and SUMPRODUCT take theirs themselves.
 TAKES = {
     "ABS": "v",
     "INT": "v",
@@ -2285,13 +2306,15 @@ def check_entry(text):
     from .errors import VBARuntimeError  # noqa: PLC0415
 
     upper = text.upper()
-    if not any(name in upper for name in _ARGUMENTS):
+    if "#SPILL!" not in upper and "#CALC!" not in upper and not any(name in upper for name in _ARGUMENTS):
         return
     try:
         tree = parse(text)
     except VBANotImplemented:
         return
     for node in _all(tree):
+        if node[0] == "err" and str(node[1]) in ("#SPILL!", "#CALC!"):  # results only: Excel will not take them typed
+            raise VBARuntimeError(1004, "Application-defined or object-defined error")
         if node[0] != "func" or node[1] not in _ARGUMENTS:
             continue
         name, args = node[1], node[2]
@@ -2412,3 +2435,5 @@ FUNCTIONS = {
     "MAXIFS": f_maxifs,
     "MINIFS": f_minifs,
 }
+
+from . import library  # noqa: E402, F401 - Excel's other functions, which register themselves here

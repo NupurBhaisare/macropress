@@ -1802,6 +1802,366 @@ TL("lk_dups3", "AZ", ["=XMATCH(5,{5,5,5,5,5},0,2)", "=XMATCH(5,{1,5,5,5,9},0,2)"
 TL("lk_blank", "BA", ["=MATCH(0,K1:K10,0)", "=XMATCH(0,K1:K10)", "=XMATCH(-5,K5:K7,1)", "=XMATCH(6,K5:K7,-1)", "=VLOOKUP(0,K1:L10,2,FALSE)",
                       "=XLOOKUP(-5,K5:K7,L5:L7,,1)"])
 SHEETS += [("LK", [8] * 60, LK_ROWS)]
+# ------------------------------------------------------------------- group 2.4: rounding, dates, text, the rest
+# Values are read as Value2: Excel gives a cell a date or currency format as some formulas are entered (wd_formats
+# checks which), and Value would then hand VBA a Date or a Currency.
+def FV(sheet, cell, formula, numbers=False):
+    """Write a formula and read its value; with numbers, as a number to the 12 digits a cell shows (an error is
+    ERR13), for answers found by trial, whose last digits are Excel's own."""
+    return [f'{W(sheet)}.Range("{cell}").Formula = {q(formula)}', f'{"N" if numbers else "V"}: {W(sheet)}.Range("{cell}").Value2']
+
+
+def TF(module, name, sheet, column, formulas, first=1, numbers=False, setup=()):
+    """Formulas written down a column of a sheet from row `first`, each value read."""
+    T(module, name, *setup, *[x for row, f in enumerate(formulas, first) for x in FV(sheet, f"{column}{row}", f, numbers)])
+
+
+EMPTY_TEXT = q("=" + chr(34) * 2)  # ="" in VBA
+# --- rounding and arithmetic: RD's A1:A5 hold 2, "3", TRUE, a blank and 5
+TF("TRound", "rd_up", "RD", "H", ["=ROUNDUP(3.2,0)", "=ROUNDUP(-3.2,0)", "=ROUNDUP(3.14159,3)", "=ROUNDUP(31415.92654,-2)", "=ROUNDUP(0.1+0.2,1)",
+                                  "=ROUNDUP(2.5,)", "=ROUNDUP(1.23,1.9)", "=ROUNDUP(1.23,-0.5)", '=ROUNDUP("2.1",0)', "=ROUNDUP(TRUE,0)",
+                                  "=ROUNDUP(123.456,-5)", "=ROUNDUP(4.35*100,0)", "=ROUNDUP(1.005,2)", "=ROUNDUP(-0.0000001,6)", "=ROUNDUP(0.5,-1)"])
+TF("TRound", "rd_down", "RD", "I", ["=ROUNDDOWN(3.7,0)", "=ROUNDDOWN(-3.7,0)", "=ROUNDDOWN(3.14159,3)", "=ROUNDDOWN(31415.92654,-2)",
+                                    "=ROUNDDOWN(0.3-0.1,1)", "=TRUNC(8.9)", "=TRUNC(-8.9)", "=TRUNC(3.14159,2)", "=TRUNC(1234.5,-2)",
+                                    "=ROUNDDOWN(4.35*100,0)", "=TRUNC(0.1*3,1)", "=ROUNDDOWN(3-1E-15,0)", "=TRUNC(-0.5)", '=TRUNC("abc")',
+                                    "=ROUNDDOWN(10/3,14)"])
+TF("TRound", "rd_mround", "RD", "J", ["=MROUND(10,3)", "=MROUND(-10,-3)", "=MROUND(1.3,0.2)", "=MROUND(5,-2)", "=MROUND(7.5,5)", "=MROUND(2.5,5)",
+                                      "=MROUND(5,0)", "=MROUND(0,5)", "=MROUND(1.15,0.1)", "=MROUND(-7.5,-5)", "=MROUND(6.05,0.1)", '=MROUND(10,"3")',
+                                      "=MROUND(25,10)", "=MROUND(-25,10)", "=MROUND(0.3,0.1)"])
+TF("TRound", "rd_ceiling", "RD", "K", ["=CEILING(2.5,1)", "=CEILING(-2.5,-2)", "=CEILING(-2.5,2)", "=CEILING(1.5,0.1)", "=CEILING(0.234,0.01)",
+                                       "=CEILING(2.5,-2)", "=CEILING(2.5,0)", "=CEILING(4.35*100,1)", "=CEILING(-4.1,-1)", "=CEILING(-4.1,1)",
+                                       "=CEILING(0,5)", "=CEILING(7,2.5)", "=CEILING(0.3,0.1)", "=CEILING(10,3)", "=CEILING(-10,3)"])
+TF("TRound", "rd_floor", "RD", "L", ["=FLOOR(3.7,2)", "=FLOOR(-2.5,-2)", "=FLOOR(-2.5,2)", "=FLOOR(1.58,0.1)", "=FLOOR(0.234,0.01)", "=FLOOR(2.5,-2)",
+                                     "=FLOOR(2.5,0)", "=FLOOR(0,0)", "=FLOOR(0.3,0.1)", "=FLOOR(-0.3,-0.1)", "=FLOOR(10,3)", "=FLOOR(-10,3)",
+                                     "=FLOOR(7,2.5)", "=FLOOR(4.35*100,1)", "=FLOOR(-10,-3)"])
+TF("TRound", "rd_math", "RD", "M", ["=CEILING.MATH(24.3,5)", "=CEILING.MATH(6.7)", "=CEILING.MATH(-8.1,2)", "=CEILING.MATH(-5.5,2,-1)",
+                                    "=CEILING.MATH(5.5,-2)", "=FLOOR.MATH(24.3,5)", "=FLOOR.MATH(6.7)", "=FLOOR.MATH(-8.1,2)", "=FLOOR.MATH(-5.5,2,-1)",
+                                    "=CEILING.PRECISE(-4.1,-2)", "=FLOOR.PRECISE(-3.2,-1)", "=ISO.CEILING(-4.6)", "=CEILING.MATH(0.3,0.1)",
+                                    "=FLOOR.MATH(5,0)", "=CEILING.PRECISE(4.3,0)"])
+TF("TRound", "rd_mod", "RD", "N", ["=MOD(3,2)", "=MOD(-3,2)", "=MOD(3,-2)", "=MOD(-3,-2)", "=MOD(5,0)", "=MOD(0.3,0.1)", "=MOD(5.1,1)", "=MOD(2^50,3)",
+                                   "=MOD(1E+15,7)", "=MOD(-0.5,1)", "=MOD(10,2.5)", "=QUOTIENT(5,2)", "=QUOTIENT(-5,2)", "=QUOTIENT(5,0)",
+                                   "=QUOTIENT(4.35*100,1)"])
+TF("TRound", "rd_math2", "RD", "O", ["=SIGN(-2.5)", "=SIGN(0)", "=POWER(2,10)", "=POWER(-8,1/3)", "=POWER(0,0)", "=SQRT(16)", "=SQRT(-1)", "=EXP(1)",
+                                     "=LN(0)", "=LOG(100)", "=LOG(8,2)", "=LOG10(0.001)", "=PI()", "=EVEN(1.5)", "=ODD(2)"])
+TF("TRound", "rd_math3", "RD", "P", ["=PRODUCT(2,3,4)", "=PRODUCT(A1:A5)", '=PRODUCT("2",3)', "=PRODUCT(A4)", "=EVEN(-1.5)", "=ODD(-2)", "=ODD(0)",
+                                     "=EVEN(0)", "=LN(EXP(2))", "=LOG(10,1)", "=LOG(-1)", "=POWER(0,-1)", "=EXP(710)", "=SQRT(0.1+0.2)", '=SIGN("x")'])
+TF("TRound", "rd_more", "RD", "Q", ["=MOD(-7,2.5)", "=MOD(7,-2.5)", "=MOD(1E+20,3)", "=QUOTIENT(7.9,2.1)", "=MROUND(1E+15+1,2)", "=ROUNDUP(1E+300,-299)",
+                                    "=CEILING(1E+300,1E+299)", "=FLOOR(-7,-2)", "=CEILING(-7,-2)", "=EVEN(1E+300)", "=PRODUCT(1E+200,1E+200)",
+                                    "=TRUNC(1E+16+1)", "=MOD(10,1E-300)", "=ODD(2.0000001)", "=CEILING.MATH(-5.5,-2,1)"])
+
+# --- dates: DT's A1:A3 hold holidays, 1, 15 and 6 January 2024 (a Monday, a Monday, a Saturday)
+TF("TWDate", "wd_date", "DT", "H", ["=DATE(2024,1,5)", "=DATE(2024,13,1)", "=DATE(2024,1,0)", "=DATE(2024,-1,1)", "=DATE(1900,2,29)", "=DATE(1900,3,1)",
+                                    "=DATE(1900,1,0)", "=DATE(1900,1,-1)", "=DATE(0,1,1)", "=DATE(99,1,1)", "=DATE(1899,12,31)", "=DATE(10000,1,1)",
+                                    "=DATE(-1,1,1)", "=DATE(2024.9,1.9,5.9)", "=DATE(2024,1,-0.5)"])
+TF("TWDate", "wd_parts", "DT", "I", ["=YEAR(45296)", "=MONTH(45296)", "=DAY(45296.9)", "=YEAR(60)", "=MONTH(60)", "=DAY(60)", "=DAY(0)", "=MONTH(0)",
+                                     "=YEAR(0)", "=YEAR(-1)", "=YEAR(2958466)", '=DAY("x")', "=YEAR(TRUE)", "=DAY(59.99999999)", "=MONTH(61)"])
+TF("TWDate", "wd_weekday", "DT", "J", ["=WEEKDAY(45296)", "=WEEKDAY(45296,2)", "=WEEKDAY(45296,3)", "=WEEKDAY(45296,11)", "=WEEKDAY(45296,12)",
+                                       "=WEEKDAY(45296,13)", "=WEEKDAY(45296,14)", "=WEEKDAY(45296,15)", "=WEEKDAY(45296,16)", "=WEEKDAY(45296,17)",
+                                       "=WEEKDAY(45296,4)", "=WEEKDAY(0)", "=WEEKDAY(1)", "=WEEKDAY(60)", "=WEEKDAY(-1)"])
+TF("TWDate", "wd_eomonth", "DT", "K", ["=EOMONTH(DATE(2024,1,31),1)", "=EOMONTH(DATE(2024,1,15),0)", "=EOMONTH(DATE(2024,1,15),-1)",
+                                       "=EOMONTH(DATE(2024,1,15),1.9)", "=EOMONTH(DATE(2024,1,15),-1.9)", "=EOMONTH(45296.7,0)", "=EOMONTH(1,1)",
+                                       "=EOMONTH(0,0)", "=EOMONTH(DATE(1900,1,1),-1)", "=EDATE(DATE(2024,1,31),1)", "=EDATE(DATE(2024,3,31),-1)",
+                                       "=EDATE(DATE(2024,2,29),12)", "=EDATE(45296.5,1)", "=EDATE(-1,1)", "=EDATE(DATE(1900,1,31),1)"])
+TF("TWDate", "wd_datedif", "DT", "L", ['=DATEDIF(DATE(2020,1,15),DATE(2024,1,14),"y")', '=DATEDIF(DATE(2020,1,15),DATE(2024,1,14),"m")',
+                                       '=DATEDIF(DATE(2020,1,15),DATE(2024,1,14),"d")', '=DATEDIF(DATE(2024,1,31),DATE(2024,3,1),"md")',
+                                       '=DATEDIF(DATE(2015,1,31),DATE(2015,3,1),"md")', '=DATEDIF(DATE(2020,5,15),DATE(2024,2,10),"ym")',
+                                       '=DATEDIF(DATE(2020,5,15),DATE(2024,2,10),"yd")', '=DATEDIF(DATE(2024,3,1),DATE(2024,1,1),"d")',
+                                       '=DATEDIF(DATE(2024,1,1),DATE(2024,1,1),"m")', '=DATEDIF(DATE(2024,1,1),DATE(2024,3,1),"x")',
+                                       '=DATEDIF(DATE(2024,1,1),DATE(2024,3,1),"M")', '=DATEDIF(DATE(2023,2,28),DATE(2024,2,29),"y")',
+                                       '=DATEDIF(DATE(2024,2,29),DATE(2025,2,28),"y")', '=DATEDIF(DATE(2024,1,31),DATE(2024,2,29),"m")',
+                                       '=DATEDIF(DATE(2023,12,25),DATE(2024,1,5),"yd")'])
+TF("TWDate", "wd_datedif2", "DT", "M", ['=DATEDIF(DATE(1988,6,22),DATE(2012,5,11),"yd")', '=DATEDIF(DATE(2023,3,1),DATE(2024,2,29),"yd")',
+                                        '=DATEDIF(DATE(2024,3,15),DATE(2025,3,10),"yd")', '=DATEDIF(DATE(2023,3,15),DATE(2024,3,10),"yd")',
+                                        '=DATEDIF(DATE(2024,2,29),DATE(2025,2,28),"yd")', '=DATEDIF(DATE(2024,2,29),DATE(2025,3,1),"yd")',
+                                        '=DATEDIF(DATE(2023,1,31),DATE(2023,3,1),"md")', '=DATEDIF(DATE(2024,1,30),DATE(2024,3,1),"md")',
+                                        '=DATEDIF(DATE(2024,5,31),DATE(2024,7,1),"md")', '=DATEDIF(DATE(2024,1,15),DATE(2024,2,10),"md")',
+                                        '=DATEDIF(45296.9,45297.1,"d")', '=DATEDIF(DATE(2024,12,31),DATE(2025,1,1),"md")',
+                                        '=DATEDIF(DATE(2023,12,31),DATE(2024,3,1),"md")', '=DATEDIF(DATE(2024,1,31),DATE(2025,3,1),"ym")',
+                                        '=DATEDIF(DATE(2023,2,28),DATE(2024,2,28),"yd")'])
+TF("TWDate", "wd_workday", "DT", "N", ["=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,31))", "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,31),A1:A3)",
+                                       "=NETWORKDAYS(DATE(2024,1,31),DATE(2024,1,1))", "=NETWORKDAYS(DATE(2024,1,6),DATE(2024,1,7))",
+                                       "=WORKDAY(DATE(2024,1,5),1)", "=WORKDAY(DATE(2024,1,5),-1)", "=WORKDAY(DATE(2024,1,6),0)",
+                                       "=WORKDAY(DATE(2024,1,1),10,A1:A3)", "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,31),7)",
+                                       '=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,31),"0000011")', "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,31),11)",
+                                       '=WORKDAY.INTL(DATE(2024,1,5),1,"1111111")', '=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,31),"000001")',
+                                       "=WORKDAY(DATE(2024,1,5),1.9)", "=NETWORKDAYS(DATE(2024,1,1)+0.5,DATE(2024,1,2))"])
+TF("TWDate", "wd_workday2", "DT", "O", ["=WORKDAY(DATE(2024,1,5),-5,A1:A3)", "=WORKDAY.INTL(DATE(2024,1,5),3,7)", '=WORKDAY.INTL(DATE(2024,1,5),3,"0000110")',
+                                        "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,1),A1:A3)", "=WORKDAY(DATE(2024,1,5),0,A1:A3)",
+                                        "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,31),{45292,45306})", "=WORKDAY(DATE(2024,1,5),1,B1)",
+                                        "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,31),1,A1:A3)", "=WORKDAY.INTL(DATE(2024,1,5),-3,2)",
+                                        "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,31),18)", "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,31),8)",
+                                        '=WORKDAY("x",1)', "=NETWORKDAYS(-1,5)", "=WORKDAY(DATE(2024,1,5),100000000)",
+                                        "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,31),A1:A4)"])
+TF("TWDate", "wd_yearfrac", "DT", "P", ["=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1))", "=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1),1)",
+                                        "=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1),2)", "=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1),3)",
+                                        "=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1),4)", "=YEARFRAC(DATE(2023,1,31),DATE(2023,2,28),0)",
+                                        "=YEARFRAC(DATE(2023,1,31),DATE(2023,2,28),4)", "=YEARFRAC(DATE(2023,6,15),DATE(2025,3,10),1)",
+                                        "=YEARFRAC(DATE(2024,7,1),DATE(2024,1,1))", "=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1),5)",
+                                        "=YEARFRAC(DATE(2023,12,31),DATE(2024,12,31),1)", "=YEARFRAC(DATE(2024,2,29),DATE(2025,2,28),0)",
+                                        "=YEARFRAC(DATE(2023,3,1),DATE(2024,2,29),1)", "=YEARFRAC(DATE(2023,2,28),DATE(2024,2,29),0)",
+                                        "=YEARFRAC(DATE(2024,1,31),DATE(2024,3,31),0)"])
+TF("TWDate", "wd_yearfrac2", "DT", "Q", ["=YEARFRAC(DATE(2023,1,1),DATE(2024,1,1),1)", "=YEARFRAC(DATE(2024,1,1),DATE(2025,1,1),1)",
+                                         "=YEARFRAC(DATE(2023,3,1),DATE(2024,3,1),1)", "=YEARFRAC(DATE(2024,3,1),DATE(2025,3,1),1)",
+                                         "=YEARFRAC(DATE(2023,6,1),DATE(2024,5,31),1)", "=YEARFRAC(DATE(2020,2,29),DATE(2024,2,29),1)",
+                                         "=YEARFRAC(DATE(2023,2,1),DATE(2023,3,1),1)", "=YEARFRAC(DATE(2024,2,1),DATE(2024,3,1),1)",
+                                         "=YEARFRAC(DATE(2023,12,1),DATE(2024,3,1),1)", "=YEARFRAC(DATE(2024,1,1),DATE(2024,1,1),1)",
+                                         "=YEARFRAC(DATE(2023,6,15),DATE(2024,6,15),1)", "=YEARFRAC(DATE(2024,2,28),DATE(2024,3,1),0)",
+                                         "=YEARFRAC(DATE(2024,2,29),DATE(2024,3,31),0)", "=YEARFRAC(DATE(2023,2,28),DATE(2023,3,31),0)",
+                                         "=YEARFRAC(DATE(2024,1,30),DATE(2024,2,29),0)"])
+TF("TWDate", "wd_days360", "DT", "R", ["=DAYS360(DATE(2024,1,30),DATE(2024,2,1))", "=DAYS360(DATE(2024,1,31),DATE(2024,3,31))",
+                                       "=DAYS360(DATE(2024,2,29),DATE(2024,3,31))", "=DAYS360(DATE(2024,1,31),DATE(2024,3,31),TRUE)",
+                                       "=DAYS360(DATE(2024,3,31),DATE(2024,1,31))", "=DAYS360(DATE(2023,2,28),DATE(2023,3,31))",
+                                       "=DAYS360(DATE(2024,1,15),DATE(2024,2,29))", "=DAYS(DATE(2024,3,1),DATE(2024,1,1))", "=DAYS(45296.9,45290.1)",
+                                       "=DAYS(1,0)", '=DAYS("x",1)', "=DAYS360(DATE(2024,2,28),DATE(2024,2,29))", "=DAYS360(DATE(2023,1,31),DATE(2023,2,28),FALSE)",
+                                       "=DAYS360(DATE(2023,1,31),DATE(2023,2,28),TRUE)", "=DAYS360(DATE(2024,1,1),DATE(2024,12,31))"])
+TF("TWDate", "wd_time", "DT", "S", ["=TIME(12,0,0)", "=TIME(25,0,0)", "=TIME(0,90,0)", "=TIME(0,0,-1)", "=TIME(-1,0,0)", "=TIME(12,-30,0)", "=HOUR(0.75)",
+                                    "=MINUTE(0.75+1/1440)", "=SECOND(TIME(1,2,3))", "=HOUR(45296.999999)", "=SECOND(0.5+0.4/86400)",
+                                    "=SECOND(0.5+0.6/86400)", "=HOUR(-0.5)", '=MINUTE("x")', "=TIME(32768,0,0)"])
+TF("TWDate", "wd_week", "DT", "T", ["=WEEKNUM(DATE(2024,1,1))", "=WEEKNUM(DATE(2024,1,6))", "=WEEKNUM(DATE(2024,1,7))", "=WEEKNUM(DATE(2024,1,7),2)",
+                                    "=WEEKNUM(DATE(2024,12,31),21)", "=ISOWEEKNUM(DATE(2024,12,30))", "=ISOWEEKNUM(DATE(2021,1,3))",
+                                    "=WEEKNUM(DATE(2024,1,1),11)", "=WEEKNUM(DATE(2024,1,1),3)", "=WEEKNUM(DATE(2023,1,1),2)", "=WEEKNUM(DATE(2023,1,2),2)",
+                                    "=WEEKNUM(0)", "=WEEKNUM(DATE(2024,12,31))", "=WEEKNUM(DATE(2024,1,5),15)", "=ISOWEEKNUM(DATE(2024,1,1))"])
+# the number format Excel gives a General cell as a formula is entered
+T("TWDate", "wd_formats", *[x for k, f in enumerate(["=DATE(2024,1,5)", "=TODAY()", "=NOW()", "=TIME(12,0,0)", "=EDATE(45296,1)", "=EOMONTH(45296,0)",
+                                                      "=WORKDAY(45296,1)", "=DATE(2024,1,5)+1", "=YEAR(45296)", "=A1", "=A1+1", "=PMT(0.05,10,1000)",
+                                                      "=DATE(2024,1,5)-DATE(2024,1,1)", "=DAYS(45296,45290)", "=MAX(A1:A3)"], 1)
+                            for x in (f'{W("DT")}.Range("G{k}").Formula = {q(f)}', f'S: {W("DT")}.Range("G{k}").NumberFormat')])
+T("TWDate", "wd_text", *FV("DT", "G20", '=YEAR("2024-01-05")'))
+
+# --- text: TT's A1:A4 hold "a", a blank, "c" and 5, B1:C2 "x", "y", "z" and ="", D1:D4 letters outside ASCII
+TT_SET = [f'{W("TT")}.Range("C2").Formula = {EMPTY_TEXT}']
+TF("TWText", "tx_find", "TT", "H", ['=FIND("b","abcb")', '=FIND("B","abcb")', '=FIND("b","abcb",3)', '=FIND("","abc")', '=FIND("","abc",4)',
+                                    '=FIND("","abc",5)', '=FIND("a","abc",0)', '=FIND("*","a*b")', '=SEARCH("B","abcb")', '=SEARCH("b?","abcb")',
+                                    '=SEARCH("c*","abcb")', '=SEARCH("~*","a*b")', '=SEARCH("x","abc")', '=SEARCH("","abc",3)', "=FIND(1,12)"])
+TF("TWText", "tx_subst", "TT", "I", ['=SUBSTITUTE("a-b-c","-","+")', '=SUBSTITUTE("a-b-c","-","+",2)', '=SUBSTITUTE("a-b-c","-","+",3)',
+                                     '=SUBSTITUTE("a-b-c","-","+",0)', '=SUBSTITUTE("aaa","aa","b")', '=SUBSTITUTE("aaa","aa","b",2)',
+                                     '=SUBSTITUTE("abc","","x")', '=SUBSTITUTE("ABC","b","x")', "=SUBSTITUTE(12345,3,9)", '=REPLACE("abcdef",2,3,"X")',
+                                     '=REPLACE("abc",5,1,"X")', '=REPLACE("abc",0,1,"X")', '=REPLACE("abc",2,-1,"X")', '=REPLACE("abc",2,0,"X")',
+                                     '=SUBSTITUTE("a-b-c","-","+",1.9)'])
+TF("TWText", "tx_join", "TT", "J", ['=TEXTJOIN(",",TRUE,A1:A4)', '=TEXTJOIN(",",FALSE,A1:A4)', '=TEXTJOIN({"-","+"},TRUE,"a","b","c")',
+                                    '=TEXTJOIN("",TRUE,B1:C2)', '=TEXTJOIN(", ",TRUE,"",1,TRUE)', '=REPT("ab",3)', '=REPT("ab",0)', '=REPT("ab",-1)',
+                                    '=REPT("ab",2.9)', '=EXACT("abc","ABC")', '=EXACT(1,"1")', '=PROPER("hello wORLD")',
+                                    "=PROPER(\"it's 2nd-hand o'neil\")", "=PROPER(TRUE)", '=TEXTJOIN(",",TRUE,#N/A)'], setup=TT_SET)
+TF("TWText", "tx_code", "TT", "K", ["=CHAR(65)", '=CODE("A")', '=CODE("abc")', '=CODE("")', "=CHAR(0)", "=CHAR(256)", "=CHAR(233)", "=CODE(D1)",
+                                    "=UNICHAR(8364)", "=UNICODE(D2)", '=CLEAN("a"&CHAR(9)&"b")', '=T("abc")', "=T(5)", "=N(TRUE)", '=N("5")'])
+TF("TWText", "tx_misc", "TT", "L", ['=VALUE("1,234.5")', '=VALUE("abc")', '=VALUE("50%")', '=VALUE(" 12 ")', "=T(A2)", "=N(A1)", "=CHAR(65.9)",
+                                    "=UNICHAR(0)", '=UNICODE("")', "=LEN(1/3)", '=EXACT("","")', '=CLEAN(CHAR(31)&"x")', "=LOWER(TRUE)", "=PROPER(D3)",
+                                    "=N(A4)"])
+TF("TWText", "tx_more", "TT", "M", ['=TEXTJOIN(",",FALSE,B1:C2)', '=TEXTJOIN(",",TRUE)', "=TEXTJOIN(A1,TRUE,B1:C1)", '=SEARCH("a","Banana",3)',
+                                    '=FIND("na","banana",-1)', '=SUBSTITUTE("banana","a","o",3)', '=REPLACE(12345,2,2,"")', '=REPT("-",32768)',
+                                    '=LEN(REPT("ab",16000))', "=UNICODE(D4)", "=UNICHAR(65.5)", '=PROPER("ABC-DEF")', "=CHAR(10)=CHAR(10)",
+                                    '=SEARCH("?","")'], setup=TT_SET)
+T("TWText", "tx_code2", *FV("TT", "N1", "=CODE(D4)"))
+T("TWText", "tx_clean", *FV("TT", "N2", "=CLEAN(CHAR(127))"))
+
+# --- logic, information, statistics: IN's A1:A10 hold 10, 20, 20, 30, "x", TRUE, a blank, 40, 5 and =""; B1:B3 1, #N/A, 3
+IN_SET = [f'{W("IN")}.Range("A10").Formula = {EMPTY_TEXT}', f'{W("IN")}.Range("B2").Value = CVErr(xlErrNA)']
+TF("TInfo", "in_ifs", "IN", "H", ["=IFS(FALSE,1,TRUE,2)", "=IFS(FALSE,1)", '=IFS(1,"a")', '=IFS("x",1)', '=IFS(0,1,"TRUE",2)', '=SWITCH(2,1,"a",2,"b")',
+                                  '=SWITCH(3,1,"a",2,"b")', '=SWITCH(3,1,"a",2,"b","other")', '=SWITCH("A","a",1,2)', '=SWITCH(1,"1",1,2)',
+                                  '=IFNA(#N/A,"none")', '=IFNA(1/0,"none")', "=IFNA(5,0)", "=IFS(#N/A,1,TRUE,2)", "=SWITCH(#N/A,1,2,3)"])
+TF("TInfo", "in_is", "IN", "I", ["=ISERROR(1/0)", "=ISERR(NA())", "=ISNA(NA())", "=ISLOGICAL(TRUE)", "=ISNONTEXT(A7)", "=ISEVEN(2.5)", "=ISODD(-3)",
+                                 '=ISEVEN("x")', "=ISREF(A1)", "=ISREF(1)", "=ERROR.TYPE(1/0)", "=ERROR.TYPE(5)", '=TYPE("x")', "=TYPE(A7)",
+                                 "=TYPE({1,2})"], setup=IN_SET)
+TF("TInfo", "in_large", "IN", "J", ["=COUNTBLANK(A1:A10)", "=COUNTBLANK(A1:B3)", "=LARGE(A1:A10,1)", "=LARGE(A1:A10,2)", "=LARGE(A1:A10,4)",
+                                    "=SMALL(A1:A10,1)", "=LARGE(A1:A10,0)", "=LARGE(A1:A10,7)", "=LARGE(A1:A10,1.5)", "=SMALL({3,1,2},2)",
+                                    "=LARGE(B1:B3,1)", "=LARGE(5,1)", '=LARGE("5",1)', '=SMALL(A1:A10,"2")', "=COUNTBLANK(A7)"], setup=IN_SET)
+TF("TInfo", "in_rank", "IN", "K", ["=RANK(20,A1:A10)", "=RANK(20,A1:A10,1)", "=RANK.EQ(30,A1:A10)", "=RANK.AVG(20,A1:A10)", "=RANK(25,A1:A10)",
+                                   '=RANK("20",A1:A10)', "=RANK(TRUE,A1:A10)", "=MEDIAN(A1:A10)", "=MEDIAN(1,2,3,4)", "=MEDIAN(B1:B3)",
+                                   '=MEDIAN("3",TRUE)', "=MEDIAN(A5)", "=RANK(5,A1:A10,-1)", "=RANK.AVG(10,A1:A10,1)", '=MEDIAN({1,2,"3"})'],
+   setup=IN_SET)
+TF("TInfo", "in_stat", "IN", "L", ["=STDEV(A1:A10)", "=STDEV.S(A1:A10)", "=STDEVP(A1:A10)", "=STDEV.P(A1:A10)", "=VAR(A1:A10)", "=VAR.P(A1:A10)",
+                                   "=STDEV(5)", "=MODE(A1:A10)", "=MODE(1,2,3)", "=PERCENTILE(A1:A10,0.25)", "=PERCENTILE.EXC(A1:A10,0.25)",
+                                   "=QUARTILE(A1:A10,1)", "=QUARTILE.EXC(A1:A10,3)", "=PERCENTILE(A1:A10,1.5)", "=VAR.S({0.1,0.2,0.3})"], setup=IN_SET)
+TF("TInfo", "in_stat2", "IN", "M", ["=MODE(3,1,1,3)", "=MODE.SNGL(A1:A10)", "=PERCENTILE.INC(A1:A10,0)", "=PERCENTILE.INC(A1:A10,1)",
+                                    "=PERCENTILE.EXC(A1:A10,0.1)", "=QUARTILE.INC(A1:A10,4)", "=QUARTILE(A1:A10,5)", "=QUARTILE.EXC(A1:A10,0)", "=VAR(1)",
+                                    '=STDEV(1,2,"3")', "=STDEV(A5,1,2)", "=VAR.P(5)", "=STDEVP({1,2,3,4})", "=PERCENTILE(A1:A10,0.4)", "=MODE(B1:B3)"],
+   setup=IN_SET)
+# which functions work an expression out whole in a formula that is not a dynamic array (rows 13 on: no row of A1:A10)
+TF("TInfo", "in_whole", "IN", "N", ["=LARGE(A1:A4*2,1)", "=SMALL(A1:A4*2,1)", "=MEDIAN(A1:A4*2)", "=STDEV(A1:A4*2)", "=PERCENTILE(A1:A4*2,0.5)",
+                                    "=MODE(A1:A4*2)", "=PRODUCT(A1:A4*2)", '=TEXTJOIN(",",TRUE,A1:A4&"x")', "=TYPE(A1:A2)", "=NPV(0.1,A1:A4*2)",
+                                    "=VAR(A1:A4*2)", "=QUARTILE(A1:A4*2,1)", "=RANK(40,A1:A4)", "=ISREF(A1:A4)"], first=13)
+T("TInfo", "in_whole_irr", *FV("IN", "N30", "=IRR(A1:A4-25)"))
+# the variance, from a sum of squares or from the mean: where the two part
+TF("TInfo", "in_var", "IN", "R", ["=STDEV({0.1,0.2,0.3})", "=VAR.P({0.1,0.2,0.3})", "=STDEV.P({0.1,0.2,0.3})", "=VAR({100000001,100000002,100000003})",
+                                  "=VAR({1.1,2.2,3.3})", "=STDEV({1E+15,1E+15,1E+15+2})", "=VAR({0.3,0.1,0.2})", "=STDEV({1,2,3,4,5,6,7,8,9,10.1})",
+                                  "=VAR.P({1E+8,1E+8+1})", "=STDEV({123456789.123,123456789.456})"])
+
+# --- finance: FI's A1:A6 hold -1000, 300, 400, 500, a blank and "x"; B1:B4 dates, C1:C4 the amounts on them
+TF("TFin", "fi_pmt", "FI", "H", ["=PMT(0.05/12,360,200000)", "=PMT(0,12,1200)", "=PMT(0.05/12,360,200000,0,1)", "=PMT(0.05,10,-1000,500)",
+                                 "=PMT(0.05,0,1000)", "=IPMT(0.05/12,1,360,200000)", "=PPMT(0.05/12,1,360,200000)", "=IPMT(0.05/12,1,360,200000,0,1)",
+                                 "=IPMT(0.05/12,361,360,200000)", "=PPMT(0,3,12,1200)", "=IPMT(0,3,12,1200)", "=PMT(-1,10,100)", "=PMT(0.05,10.5,1000)",
+                                 "=PPMT(0.05/12,2.5,360,200000)", "=IPMT(0.1,2,3,1000,0,1)"])
+TF("TFin", "fi_pv", "FI", "I", ["=PV(0.05/12,360,-1073.64)", "=PV(0,10,-100)", "=FV(0.05/12,120,-100)", "=FV(0,10,-100,-1000)", "=FV(0.05,10,-100,-1000,1)",
+                                "=NPER(0.05/12,-1073.64,200000)", "=NPER(0,-100,1000)", "=NPER(0.05,-10,1000)", "=NPER(0.05,-100,1000,0,1)",
+                                "=PV(0.05,10,-100,0,1)", "=FV(-0.5,2,0,-100)", "=NPER(0,0,1000)", "=PV(0.05,0,-100)", '=FV(0.05,10,-100,"x")',
+                                "=PV(-1,10,100)"])
+TF("TFin", "fi_npv", "FI", "J", ["=NPV(0.1,A1:A4)", "=NPV(0.1,-1000,300,400,500)", "=NPV(0,1,2,3)", "=NPV(0.1,A1:A6)", "=NPV(-1,1,2)", '=NPV(0.1,"5",1)',
+                                 "=XNPV(0.1,C1:C4,B1:B4)", "=XNPV(0.1,C1:C3,B1:B4)", "=XNPV(0,C1:C4,B1:B4)", "=XNPV(0.1,{-1000,500},{45292,45000})",
+                                 "=XNPV(-1,C1:C4,B1:B4)", "=NPV(0.1,TRUE,1)", "=XNPV(0.1,C1:C4,B1:B4+0.5)", "=NPV(0.1,{1,2,3})",
+                                 "=XNPV(0.1,{100},{45292})"])
+TF("TFin", "fi_irr", "FI", "K", ["=IRR(A1:A4)", "=IRR(A1:A4,0.5)", "=IRR({-100,110})", "=IRR({-1000,100,100,100,100,1100},-0.5)", "=IRR(A1:A6)",
+                                 "=IRR({-1,0,0,0,1.5})", "=IRR({-500,100,200,300})", "=IRR({-100,10,10,110},0.5)", "=IRR({-50,-50,30,30,60})"], numbers=True)
+TF("TFin", "fi_irr_err", "FI", "L", ["=IRR({100,110})", "=IRR({-100})", "=IRR(B1:B4)", "=IRR({0,0})", '=IRR({100,"x",0})'])
+# found by trial: Excel stops within its tolerance, and its digits depend on its search (one each, as MacroPress stops at them)
+for k, f in enumerate(["=IRR({-100,230,-132},0.25)", "=IRR({-100,230,-132})", "=IRR({-100,110},-1)", "=XIRR(C1:C4,B1:B4)", "=XIRR(C1:C4,B1:B4,0.5)", "=XIRR({-100,110},{45292,45658})",
+                       "=RATE(360,-1073.64,200000)", "=RATE(10,-100,1000)", "=RATE(10,-120,1000)", "=RATE(10,-120,1000,0,1)", "=RATE(48,-200,8000)",
+                       "=XIRR({100,110},{45292,45658})", "=RATE(4,-100,1000)", "=XIRR({-100,110},{45658,45292})", "=XIRR(C1:C3,B1:B4)",
+                       "=RATE(0,-100,1000)", "=XIRR({-100,110},{45292,45292})"], 1):
+    T("TFin", f"fi_trial{k}", *FV("FI", f"O{k}", f, numbers=True))
+TF("TFin", "fi_dep", "FI", "M", ["=DB(1000000,100000,6,1,7)", "=DB(1000000,100000,6,2,7)", "=DB(1000000,100000,6,7,7)", "=DB(1000000,100000,6,8,7)",
+                                 "=DB(10000,1000,5,1)", "=DDB(2400,300,10,1)", "=DDB(2400,300,10,10)", "=DDB(2400,300,10,1,1.5)", "=SLN(30000,7500,10)",
+                                 "=SLN(30000,7500,0)", "=SYD(30000,7500,10,1)", "=SYD(30000,7500,10,11)", "=DB(1000,0,5,1)", "=DDB(2400,3000,10,1)",
+                                 "=DB(1000,100,0.5,1)"])
+
+# --- SUBTOTAL and AGGREGATE: each test its own sheet, as rows are hidden. A2:A9 hold the powers of 2 (which rows
+# counted shows in the sum), B2:B9 x and y in turn, D1:D6 3, "x", TRUE, a blank, 5 and 1
+def SB(k):
+    return W(f"SB{k}")
+
+
+def sb_read(k, *cells):
+    return [f'V: {SB(k)}.Range("{c}").Value2' for c in cells]
+
+
+def sb_write(k, *formulas, column="H"):
+    return [f'{SB(k)}.Range("{column}{row}").Formula = {q(f)}' for row, f in enumerate(formulas, 1)]
+
+
+T("TSub", "sb_manual", *sb_write(1, "=SUBTOTAL(9,A2:A9)", "=SUBTOTAL(109,A2:A9)", "=SUBTOTAL(2,A2:A9)", "=SUBTOTAL(103,A1:A9)", "=SUBTOTAL(104,A2:A9)",
+                                 "=SUM(H1:H2)"),
+  *sb_read(1, "H1", "H2", "H3", "H4"), f'{SB(1)}.Rows("3:4").Hidden = True', *sb_read(1, "H1", "H2", "H3", "H4", "H5", "H6"),
+  f'{SB(1)}.Rows("9:9").Hidden = True', *sb_read(1, "H5"), f'{SB(1)}.Rows("3:9").Hidden = False', *sb_read(1, "H2", "H5"))
+T("TSub", "sb_filter", *sb_write(2, "=SUBTOTAL(9,A2:A9)", "=SUBTOTAL(109,A2:A9)", "=SUM(A2:A9)", "=SUBTOTAL(3,B2:B9)"),
+  f'{SB(2)}.Range("A1:B9").AutoFilter 2, "x"', *sb_read(2, "H1", "H2", "H3", "H4"), f'{SB(2)}.Rows("4:4").Hidden = True', *sb_read(2, "H1", "H2"),
+  f"{SB(2)}.ShowAllData", *sb_read(2, "H1", "H2"), f'S: {SB(2)}.Rows(4).Hidden', f'{SB(2)}.Rows("6:6").Hidden = True', *sb_read(2, "H1", "H2"))
+T("TSub", "sb_filter2", f'{SB(3)}.Range("A12").Value = 1000', *sb_write(3, "=SUBTOTAL(9,A2:A12)", "=SUBTOTAL(109,A2:A12)"),
+  f'{SB(3)}.Rows("4:4").Hidden = True', f'{SB(3)}.Rows("12:12").Hidden = True', *sb_read(3, "H1", "H2"), f'{SB(3)}.Range("A1:B9").AutoFilter 2, "x"',
+  f'S: {SB(3)}.Rows(4).Hidden', f'S: {SB(3)}.Rows(12).Hidden', *sb_read(3, "H1", "H2"), f'{SB(3)}.Rows("5:5").Hidden = False', *sb_read(3, "H1", "H2"),
+  f'{SB(3)}.Rows("12:12").Hidden = False', *sb_read(3, "H1"), f'{SB(3)}.AutoFilterMode = False', *sb_read(3, "H1", "H2"))
+T("TSub", "sb_nested", *sb_write(4, "=SUBTOTAL(9,A2:A5)", "=SUBTOTAL(9,A2:A5)*2", "=AGGREGATE(9,0,A2:A5)", "=SUM(A2:A5)", "=1+SUBTOTAL(109,A6:A9)",
+                                 column="C"),
+  *sb_write(4, "=SUBTOTAL(9,C1:C5)", "=SUBTOTAL(9,C1)", "=SUBTOTAL(9,C2)", "=SUBTOTAL(9,C3)", "=SUBTOTAL(9,C5)", "=AGGREGATE(9,0,C1:C5)",
+            "=AGGREGATE(9,4,C1:C5)", "=SUM(C1:C5)", "=SUBTOTAL(9,C4,C1)", "=SUBTOTAL(9,H1)", '=SUBTOTAL(9,IF(TRUE,C1:C5))', "=SUBTOTAL(9,C1:C5,C1:C5)"),
+  *sb_read(4, *[f"H{k}" for k in range(1, 13)]))
+T("TSub", "sb_fns", *sb_write(5, *[f"=SUBTOTAL({n},D1:D6)" for n in range(1, 12)], "=SUBTOTAL(0,D1:D6)", "=SUBTOTAL(12,D1:D6)", "=SUBTOTAL(9.7,D1:D6)",
+                              "=SUBTOTAL(9,D1:D6,A2:A3)"),
+  *sb_read(5, *[f"H{k}" for k in range(1, 16)]))
+T("TSub", "sb_agg", f'{SB(6)}.Range("A10").Formula = "=1/0"', f'{SB(6)}.Range("A11").Formula = "=SUBTOTAL(9,A2:A3)"', f'{SB(6)}.Rows("3:3").Hidden = True',
+  *sb_write(6, "=AGGREGATE(9,0,A2:A11)", "=AGGREGATE(9,2,A2:A11)", "=AGGREGATE(9,3,A2:A11)", "=AGGREGATE(9,6,A2:A11)", "=AGGREGATE(9,7,A2:A11)",
+            "=AGGREGATE(9,5,A2:A9)", "=AGGREGATE(14,6,A2:A11,2)", '=AGGREGATE(15,6,A2:A9/(B2:B9="x"),1)', '=AGGREGATE(15,6,A2:A9/(B2:B9="y"),2)',
+            "=AGGREGATE(12,6,A2:A11)", "=AGGREGATE(16,6,A2:A9,0.5)", "=AGGREGATE(9,8,A2:A9)", "=AGGREGATE(20,0,A2:A9)", "=AGGREGATE(4,1,A2:A9)",
+            "=AGGREGATE(14,6,A2:A9,0)"),
+  *sb_read(6, *[f"H{k}" for k in range(1, 16)]))
+T("TSub", "sb_agg2", f'{SB(7)}.Rows("3:3").Hidden = True',
+  *sb_write(7, "=AGGREGATE(14,5,A2:A9,8)", "=AGGREGATE(14,1,A2:A9*1,8)", "=AGGREGATE(14,4,A2:A9*1,8)", "=AGGREGATE(1,0,A2:A9)", "=AGGREGATE(2,0,D1:D6)",
+            "=AGGREGATE(3,0,D1:D6)", "=AGGREGATE(6,0,D1:D6)", "=AGGREGATE(13,0,A2:A9)", "=AGGREGATE(17,0,A2:A9,1)", "=AGGREGATE(18,0,A2:A9,0.5)",
+            "=AGGREGATE(19,0,A2:A9,3)", "=AGGREGATE(7,0,A2:A9)", "=AGGREGATE(14,6,{1,5,3},1)", "=AGGREGATE(9,1,A2:A9,D1:D6)", "=AGGREGATE(14,6,A2:A9,{1,2})"),
+  *sb_read(7, *[f"H{k}" for k in range(1, 16)]))
+T("TSub", "sb_cols", f'{SB(8)}.Range("A12:H12").Value = Array(1, 2, 4, 8, 16, 32, 64, 128)', f'{SB(8)}.Columns("C:C").Hidden = True',
+  *sb_write(8, "=SUBTOTAL(109,A12:H12)", "=AGGREGATE(9,5,A12:H12)", "=SUBTOTAL(9,A2:A9)", column="J"), *[f'V: {SB(8)}.Range("J{k}").Value2' for k in (1, 2, 3)])
+T("TSub", "sb_entry", *[x for k, f in enumerate(["=SUBTOTAL(9,{1,2})", "=SUBTOTAL(9,1)", "=SUBTOTAL(9)", "=AGGREGATE(9,0,{1,2})", "=AGGREGATE(14,6,{1,2,3},1)",
+                                                  "=SUBTOTAL(9,A2:A9*1)", "=SUBTOTAL(A1,A2:A9)"], 1)
+                        for x in (f'E: {SB(9)}.Range("H{k}").Formula = {q(f)}', f'V: {SB(9)}.Range("H{k}").Value2')])
+T("TSub", "sb_view", *[x for k, f in enumerate(["=SUBTOTAL(9,A2:A9)", '=AGGREGATE(15,6,A2:A9/(B2:B9="x"),1)', "=ROUNDUP(A2:A9,0)", "=LARGE(A2:A9*2,1)",
+                                                 "=MEDIAN(A2:A9*2)", '=TEXTJOIN(",",TRUE,A2:A9&"x")', "=NPV(0.1,A2:A9*2)", "=DATE(2024,A2:A9,1)",
+                                                 "=EOMONTH(A2:A9,0)", "=IRR(A2:A9-25)", "=SMALL(A2:A9,{1,2})", "=COUNTBLANK(A2:A9)"], 1)
+                       for x in (f'{SB(10)}.Range("H{k}").Formula = {q(f)}', f'S: {SB(10)}.Range("H{k}").Formula2')])
+# what the first answers left open
+TF("TRound", "rd_modlimit", "RD", "R", ["=MOD(1E+8,1)", "=MOD(2^27,1)", "=MOD(2^27+0.5,1)", "=MOD(1E+9,1)", "=MOD(2^31,1)", "=MOD(1E+10,3)",
+                                        "=MOD(1E+11,3)", "=MOD(1E+12,3)", "=MOD(1E+13,3)", "=MOD(1E+14,3)", "=MOD(2^40,3)", "=MOD(2^46,3)",
+                                        "=MOD(2^47,3)", "=MOD(2^48,3)", "=MOD(2^49,3)"])
+TF("TRound", "rd_modlimit2", "RD", "S", ["=MOD(2^48,1)", "=MOD(2^48-1,1)", "=MOD(2^48+0.5,1)", "=MOD(2^49-1,2)", "=MOD(5,2^-30)", "=MOD(1,1E-14)",
+                                         "=MOD(1,2^-48)", "=MOD(1,2^-47)", "=MOD(-(2^48),1)", "=MOD(2^48,-1)", "=MOD(1E+300,1E+290)",
+                                         "=MOD(2^47*3+1,3)", "=MOD(2^48*3-1,3)", "=MOD(2^48*3,3)", "=MOD(2^48*3+1,3)"])
+TF("TWDate", "wd_datedif3", "DT", "U", ['=DATEDIF(DATE(1989,6,22),DATE(2012,5,11),"yd")', '=DATEDIF(DATE(2024,2,29),DATE(2028,2,28),"yd")',
+                                        '=DATEDIF(DATE(2024,2,29),DATE(2028,3,1),"yd")', '=DATEDIF(DATE(2023,6,22),DATE(2024,5,11),"yd")',
+                                        '=DATEDIF(DATE(2020,3,1),DATE(2023,2,28),"yd")', '=DATEDIF(DATE(2019,3,1),DATE(2024,2,29),"yd")',
+                                        '=DATEDIF(DATE(2020,1,31),DATE(2023,3,1),"md")', '=DATEDIF(DATE(2020,2,29),DATE(2021,2,28),"y")',
+                                        '=DATEDIF(DATE(2020,2,29),DATE(2021,3,1),"y")', '=DATEDIF(DATE(2020,2,29),DATE(2021,2,28),"md")',
+                                        '=DATEDIF(DATE(2024,1,31),DATE(2024,3,30),"ym")', '=DATEDIF(DATE(2024,3,31),DATE(2024,4,30),"m")',
+                                        '=DATEDIF(DATE(1990,6,22),DATE(2012,5,11),"yd")', '=DATEDIF(DATE(2023,1,15),DATE(2024,3,10),"yd")',
+                                        '=DATEDIF(DATE(2024,1,15),DATE(2025,3,10),"yd")'])
+TF("TWDate", "wd_datedif4", "DT", "V", ['=DATEDIF(DATE(2020,2,29),DATE(2024,2,28),"yd")', '=DATEDIF(DATE(2020,2,29),DATE(2023,3,1),"yd")',
+                                        '=DATEDIF(DATE(2021,3,1),DATE(2024,2,29),"yd")', '=DATEDIF(DATE(2021,12,31),DATE(2024,12,30),"yd")',
+                                        '=DATEDIF(DATE(2024,12,31),DATE(2026,12,30),"yd")', '=DATEDIF(DATE(2023,3,1),DATE(2024,3,1),"yd")',
+                                        '=DATEDIF(DATE(2024,2,28),DATE(2025,2,27),"yd")', '=DATEDIF(DATE(2023,2,28),DATE(2024,2,27),"yd")',
+                                        '=DATEDIF(DATE(2024,3,1),DATE(2025,2,28),"yd")', '=DATEDIF(DATE(2022,3,1),DATE(2024,2,29),"md")',
+                                        '=DATEDIF(DATE(2024,3,31),DATE(2024,5,1),"md")', '=DATEDIF(DATE(2024,1,29),DATE(2024,3,1),"md")',
+                                        '=DATEDIF(DATE(2023,1,29),DATE(2023,3,1),"md")', '=DATEDIF(DATE(2023,1,29),DATE(2023,3,1),"m")',
+                                        '=DATEDIF(1,60,"d")'])
+# the functions that came from the Analysis ToolPak, given a range in a formula that is not a dynamic array (row 2 of A1:A3)
+T("TWDate", "wd_atp1", *[x for f in ["=EOMONTH(A1:A3,0)", "=EDATE(A1:A3,1)", "=WORKDAY(A1:A3,1)", "=NETWORKDAYS(A1:A3,A2)", "=YEARFRAC(A1:A3,A2)",
+                                      "=WEEKNUM(A1:A3)", "=DATEDIF(A1:A3,A3,\"d\")"]
+                         for x in (f'{W("DT")}.Range("W2").Formula = {q(f)}', f'V: {W("DT")}.Range("W2").Value2', f'S: {W("DT")}.Range("W2").Formula2')])
+T("TWDate", "wd_atp2", *[x for f in ["=DAYS(A1:A3,A2)", "=ISOWEEKNUM(A1:A3)", "=YEAR(A1:A3)", "=EOMONTH(A1:A3+0,0)", "=SUM(EOMONTH(A1:A3,0))",
+                                      "=EOMONTH({45292,45306},0)", "=NETWORKDAYS(A2,A3,A1:A3)"]
+                         for x in (f'{W("DT")}.Range("X2").Formula = {q(f)}', f'V: {W("DT")}.Range("X2").Value2', f'S: {W("DT")}.Range("X2").Formula2')])
+T("TRound", "rd_atp", *[x for f in ["=MROUND(A1:A5,2)", "=QUOTIENT(A1:A5,2)", "=ISEVEN(A1:A5)", "=ISODD(A1:A5)", "=ROUND({1.5,2.5},0)", "=LEN({\"ab\",\"c\"})",
+                                     "=SUM(MROUND(A1:A5,2))"]
+                        for x in (f'{W("RD")}.Range("T5").Formula = {q(f)}', f'V: {W("RD")}.Range("T5").Value2', f'S: {W("RD")}.Range("T5").Formula2')])
+TF("TInfo", "in_more", "IN", "O", ["=ISEVEN(TRUE)", "=ISODD(TRUE)", "=ISEVEN(A7)", '=ISEVEN("2")', "=ISODD(-2.5)", "=N(A1:A3)", '=T(A5:A6)',
+                                   "=ERROR.TYPE(#NULL!)", "=ERROR.TYPE(#SPILL!)", "=TYPE(#N/A)", "=TYPE(TRUE)", "=ISNONTEXT(#N/A)", "=ISLOGICAL(A6)",
+                                   "=ISERR(1/0)", '=IFNA("",1)'], setup=IN_SET)
+T("TInfo", "in_entry", *[x for k, f in enumerate(["=IFS(TRUE)", "=SWITCH(1,2)", "=ROUNDUP(1)", "=DATE(1,2)", "=COUNTBLANK({1,2})", "=RANK(1,{1,2})",
+                                                  "=LARGE({1,2})"], 1)
+                         for x in (f'E: {W("IN")}.Range("P{k}").Formula = {q(f)}', f'V: {W("IN")}.Range("P{k}").Value2')])
+T("TInfo", "in_entry2", *[x for k, f in enumerate(["=NPV(0.1)", "=PMT(0.1,2)", "=COUNTBLANK(A1:A2*1)", "=RANK(1,A1:A2*1)", "=XNPV(0.1,{1,2},{1;2})",
+                                                   "=TEXTJOIN(\",\",TRUE)", "=AGGREGATE(9,0)"], 1)
+                          for x in (f'E: {W("IN")}.Range("Q{k}").Formula = {q(f)}', f'V: {W("IN")}.Range("Q{k}").Value2')])
+TF("TFin", "fi_more", "FI", "N", ["=XNPV(-0.5,C1:C4,B1:B4)", "=XNPV(0.0001,C1:C4,B1:B4)", "=XNPV(1E-10,C1:C4,B1:B4)", '=XNPV(0.1,{100,"x"},{45292,45300})',
+                                  "=XNPV(0.1,C1:C4,B1:B4)-C1", "=NPV(0.1,A5)", "=NPV(0.1,{-1,0,0,0,1.5})", "=PMT(0.1,10,0)", "=PV(0.1,10,0,1000)", "=NPER(-0.1,-100,1000)",
+                                  "=FV(0.05,-1,100)", "=PMT(0.05,-10,1000)", "=PV(1E-20,10,-100)", "=PMT(1E-300,10,1000)", "=DB(1000,100,5,6,6)"])
+TF("TRound", "rd_modlimit3", "RD", "U", ["=MOD(1E+12,1)", "=MOD(2^40,1)", "=MOD(2^40-1,1)", "=MOD(2^40+1,1)", "=MOD(1.1E+12,1)", "=MOD(2E+12,1)",
+                                         "=MOD(5E+11,1)", "=MOD(2^41,1)", "=MOD(2^39,1)", "=MOD(-(2^40),1)", "=MOD(3*2^40-3,3)", "=MOD(3*2^40,3)",
+                                         "=MOD(2^40-0.5,1)", "=MOD(1,1/(2^40-1))", "=MOD(1,2^-40)"])
+TF("TWDate", "wd_atp3", "DT", "Y", ["=EOMONTH(TRUE,0)", "=EDATE(TRUE,1)", "=WEEKNUM(TRUE)", "=YEARFRAC(TRUE,2)", "=NETWORKDAYS(TRUE,10)", "=WORKDAY(TRUE,1)",
+                                    "=EOMONTH(45296,TRUE)", "=MROUND(TRUE,1)", "=QUOTIENT(TRUE,1)", "=ISOWEEKNUM(TRUE)", '=DATEDIF(TRUE,2,"d")', "=DAYS(TRUE,0)",
+                                    '=EOMONTH("45296",0)', "=EOMONTH(B1,0)", "=WEEKDAY(TRUE)"])
+T("TWDate", "wd_atp4", *[x for f in ["=NETWORKDAYS.INTL(A1:A3,A2)", "=WORKDAY.INTL(A1:A3,1)", "=DAYS360(A1:A3,A2)", "=N(A1:A3)", "=T(A1:A3)", "=TYPE(A1:A2)",
+                                      "=ERROR.TYPE(A1:A3)"]
+                         for x in (f'{W("DT")}.Range("Z2").Formula = {q(f)}', f'V: {W("DT")}.Range("Z2").Value2', f'S: {W("DT")}.Range("Z2").Formula2')])
+# the format Excel gives a General cell as a formula is entered, in the shapes formulas take (A1:A3 hold dates)
+T("TWDate", "wd_formats2", *[x for k, f in enumerate(["=IPMT(0.1,1,10,1000)", "=PPMT(0.1,1,10,1000)", "=PV(0.1,10,-100)", "=FV(0.1,10,-100)", "=NPV(0.1,1,2)",
+                                                       "=NPER(0.1,-100,1000)", "=IRR({-100,110})", "=XNPV(0.1,{1,2},{45292,45300})", "=DATE(2024,1,5)*1",
+                                                       "=1+DATE(2024,1,5)", "=IF(TRUE,DATE(2024,1,5),0)", "=TODAY()-A1", "=DATE(2024,1,5)+TIME(1,0,0)",
+                                                       "=TIME(1,0,0)+1", "=DATE(2024,1,5)-1"], 1)
+                             for x in (f'{W("DT")}.Range("AA{k}").Formula = {q(f)}', f'S: {W("DT")}.Range("AA{k}").NumberFormat')])
+T("TWDate", "wd_formats3", *[x for k, f in enumerate(["=ROUND(DATE(2024,1,5),0)", "=MAX(DATE(2024,1,5),1)", '=DATE(2024,1,5)&""', "=-DATE(2024,1,5)",
+                                                       "=(DATE(2024,1,5))", "=DATE(2024,1,5)+A1", "=A1-A2", "=A1+A2", "=SUM(A1:A3)", "=A1*1",
+                                                       "=IFERROR(DATE(2024,1,5),0)", "=TODAY()+1", "=NOW()-TODAY()", "=DATE(2024,1,5)+B1", "=PMT(0.1,10,1000)*2"], 1)
+                             for x in (f'{W("DT")}.Range("AB{k}").Formula = {q(f)}', f'S: {W("DT")}.Range("AB{k}").NumberFormat')])
+T("TWDate", "wd_formats4", f'{W("DT")}.Range("AC1:AC4").NumberFormat = "0.00"', f'{W("DT")}.Range("AC5").NumberFormat = "@"',
+  *[x for k, f in enumerate(["=DATE(2024,1,5)", "=PMT(0.1,10,1000)", "=TIME(1,0,0)", "=A1", "=DATE(2024,1,5)"], 1)
+    for x in (f'{W("DT")}.Range("AC{k}").Formula = {q(f)}', f'S: {W("DT")}.Range("AC{k}").NumberFormat')],
+  f'V: {W("DT")}.Range("AC5").Value', f'{W("DT")}.Range("AC6").Formula2 = "=DATE(2024,1,5)"', f'S: {W("DT")}.Range("AC6").NumberFormat',
+  f'{W("DT")}.Range("AC7").FormulaR1C1 = "=DATE(2024,1,5)"', f'S: {W("DT")}.Range("AC7").NumberFormat', f'{W("DT")}.Range("AC8").Value = "=DATE(2024,1,5)"',
+  f'S: {W("DT")}.Range("AC8").NumberFormat')
+TF("TRound", "rd_modlimit4", "RD", "V", ["=MOD(1.2E+12,1)", "=MOD(1.3E+12,1)", "=MOD(1.4E+12,1)", "=MOD(1.5E+12,1)", "=MOD(1.6E+12,1)",
+                                         "=MOD(1.7E+12,1)", "=MOD(1.8E+12,1)", "=MOD(1.9E+12,1)", "=MOD(1.65E+12,1)", "=MOD(1.75E+12,1)",
+                                         "=MOD(1.85E+12,1)", "=MOD(1.95E+12,1)", "=MOD(1.5*2^40,1)", "=MOD(1.25E+12,1)", "=MOD(1.45E+12,1)"])
+FMT5 = ["=SLN(30000,7500,10)", "=SYD(30000,7500,10,1)", "=DB(10000,1000,5,1)", "=DDB(2400,300,10,1)", "=RATE(10,-120,1000)",
+        "=XIRR({-100,110},{45292,45658})", "=PMT(0.1,10,1000)+1", "=-PMT(0.1,10,1000)", "=ROUND(PMT(0.1,10,1000),2)", "=IRR({-100,110})*100",
+        "=MIN(DATE(2024,1,5),45300)", "=AVERAGE(A1:A3)", "=ABS(DATE(2024,1,5))", "=INT(NOW())", "=CHOOSE(1,DATE(2024,1,5))"]
+FMT6 = ["=MAX(1,DATE(2024,1,5))", "=SUM(DATE(2024,1,5),1)", "=DATE(2024,1,5)+0.5", "=TIME(1,0,0)+TIME(2,0,0)", "=NOW()+1", "=TODAY()-1",
+        "=DATE(2024,1,5)/1", '=DATEDIF(A1,TODAY(),"d")', '=TEXT(TODAY(),"yyyy")', "=ROUNDUP(DATE(2024,1,5),0)", "=EDATE(TODAY(),1)",
+        "=DATE(2024,1,5)-TIME(1,0,0)", "=TIME(1,0,0)-DATE(2024,1,5)", "=1-DATE(2024,1,5)", "=DATE(YEAR(A1),MONTH(A1)+1,1)"]
+FMT7 = ["=NPV(0.1,1,2)+0", "=FV(0.1,10,-100)*1", "=PV(0.1,10,-100)-1", "=IFNA(DATE(2024,1,5),0)", "=MEDIAN(DATE(2024,1,5))", "=ROUND(TODAY(),0)",
+        "=TRUNC(NOW())", "=MOD(NOW(),1)", "=NOW()-INT(NOW())", "=TIME(1,0,0)*24", "=HOUR(NOW())", "=IRR({-100,110})+0", "=-IRR({-100,110})",
+        "=ROUND(IRR({-100,110}),2)", "=PMT(0.1,10,1000)/12"]
+FMT8 = ["=YEAR(TODAY())", "=MONTH(TODAY())", "=DAY(TODAY())", "=WEEKDAY(TODAY())", "=EOMONTH(TODAY(),0)", "=NETWORKDAYS(A1,TODAY())",
+        "=WORKDAY(TODAY(),5)", "=WEEKNUM(TODAY())", "=YEARFRAC(A1,TODAY())", "=DAYS(TODAY(),A1)", "=ROUNDDOWN(NOW(),0)", "=ISOWEEKNUM(TODAY())",
+        "=MINUTE(NOW())", "=CEILING(DATE(2024,1,5),1)", "=EOMONTH(A1,0)"]
+for name, column, formulas in [("wd_formats5", "AD", FMT5), ("wd_formats6", "AE", FMT6), ("wd_formats7", "AF", FMT7), ("wd_formats8", "AG", FMT8)]:
+    T("TWDate", name, *[x for k, f in enumerate(formulas, 1)
+                        for x in (f'{W("DT")}.Range("{column}{k}").Formula = {q(f)}', f'S: {W("DT")}.Range("{column}{k}").NumberFormat')])
+SHEETS += [("RD", [8] * 22, [[2], ["3"], [True], [None], [5]]),
+           ("DT", [10] * 36, [[(d("2024-01-01"), "date")], [(d("2024-01-15"), "date")], [(d("2024-01-06"), "date")]]),
+           ("TT", [10] * 16, [["a", "x", "y", "é"], [None, "z", None, "€"], ["c", None, None, "ÉCOLE élève"], [5, None, None, "ā"]]),
+           ("IN", [8] * 16, [[10, 1], [20, None], [20, 3], [30], ["x"], [True], [None], [40], [5]]),
+           ("FI", [10] * 16, [[-1000, (d("2024-01-01"), "date"), -1000], [300, (d("2024-06-01"), "date"), 300],
+                              [400, (d("2025-01-01"), "date"), 400], [500, (d("2025-07-01"), "date"), 500], [], ["x"]])]
+SB_ROWS = [["K", "G", None, 3]] + [[2**k, "xy"[k % 2], None, ["x", True, None, 5, 1][k] if k < 5 else None] for k in range(8)]
+SHEETS += [(f"SB{k}", [8] * 12, SB_ROWS) for k in range(1, 11)]
 SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
 def sheets(index):

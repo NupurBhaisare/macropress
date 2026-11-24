@@ -347,6 +347,46 @@ def mark_date_literals(line):
     return "".join(out)
 
 
+def mark_evaluate(line):
+    """[A1+1] is Evaluate("A1+1"): the brackets, outside strings and comments, become a call of Evaluate with their
+    text (brackets inside them, a table's [Column], kept)."""
+    if "[" not in line or line.lstrip().lower().startswith("rem "):
+        return line
+    out, i = [], 0
+    while i < len(line):
+        ch = line[i]
+        if ch == '"':
+            j = i + 1
+            while j < len(line) and not (line[j] == '"' and line[j + 1 : j + 2] != '"'):
+                j += 2 if line[j] == '"' else 1
+            out.append(line[i : j + 1])
+            i = j + 1
+        elif ch == "'":
+            out.append(line[i:])
+            break
+        elif ch == "[":
+            depth, j = 0, i
+            while j < len(line):
+                depth += {"[": 1, "]": -1}.get(line[j], 0)
+                if line[j] == '"':  # a string inside the brackets: its ] are its own
+                    j += 1
+                    while j < len(line) and not (line[j] == '"' and line[j + 1 : j + 2] != '"'):
+                        j += 2 if line[j] == '"' else 1
+                if depth == 0:
+                    break
+                j += 1
+            if j >= len(line):
+                out.append(line[i:])
+                break
+            body = line[i + 1 : j].replace('"', '""')
+            out.append(f'Evaluate("{body}")')
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 class Builder:
     def __init__(self, text, first_line=1):
         self.first_line = first_line
@@ -355,7 +395,7 @@ class Builder:
             stripped = line.strip()
             if stripped.startswith("Attribute ") and "=" in stripped:
                 stripped = ""  # module/procedure attributes (VB_Name, VB_ProcData, ...)
-            prepared.append(mark_date_literals(stripped))
+            prepared.append(mark_evaluate(mark_date_literals(stripped)))
         self.src = vbparser.makeSafeFromUnicode("\n".join(prepared) + "\n\n")
         self.newlines = [i for i, ch in enumerate(self.src) if ch == "\n"]
 

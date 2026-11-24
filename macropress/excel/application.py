@@ -11,7 +11,7 @@ from ..values import (
     to_str,
 )
 from .constants import XL_CONSTANTS
-from .functions import WorksheetFunction
+from .functions import APPLICATION_OWN, WorksheetFunction, evaluate
 from .range import Range
 
 # ---------------------------------------------------------------------------
@@ -43,6 +43,17 @@ class Application(VBAObject):
 
     def note(self, key, detail=None):
         self.ledger.note(key, detail)
+
+    def vba_member(self, name, args=(), kwargs=None):
+        """Application's own members, else a worksheet function by name (Application.Match), which hands an error
+        back as its value where WorksheetFunction raises error 1004."""
+        key = name.lower()
+        if hasattr(self, "m_" + key) or hasattr(self, "get_" + key) or name.upper() in APPLICATION_OWN:
+            return super().vba_member(name, args, kwargs)
+        return self.wsf.call(name, list(args), kwargs or {}, hand_back=True)
+
+    def m_evaluate(self, name):
+        return evaluate(self.book.active, name)
 
     def ask(self, question):
         """What the user types where Excel asks: the run's next answer; without one, the run stops."""
@@ -231,6 +242,10 @@ class Globals(VBAObject):
 
     def get_worksheetfunction(self):
         return self.app.wsf
+
+    def m_evaluate(self, name):
+        """Evaluate, and [A1+1]: against the active sheet, or in a sheet's module that sheet."""
+        return evaluate(self._target(), name)
 
     def m_intersect(self, *ranges):
         return self.app.m_intersect(*ranges)

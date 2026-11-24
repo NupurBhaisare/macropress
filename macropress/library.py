@@ -1102,6 +1102,8 @@ def f_rank_avg(ev, args):
 
 def f_countblank(ev, args):
     v = ev.keep(args[0])
+    if not isinstance(v, Array):
+        raise VBANotImplemented("COUNTBLANK of a value, not a range")
     rows, cols = v.extent
     held = sum(n for x, n in v.counted() if x is not None and x != "")
     return float(rows * cols - held)
@@ -1362,11 +1364,14 @@ def _reduce(kind, xs):
 
 
 def _rect_named(ev, node):
-    """The cells an argument names, a reference or a function that hands back cells; None for anything else."""
+    """The cells an argument names, a reference or a function that hands back cells (or a Range from VBA); None for
+    anything else."""
     while node[0] == "paren":
         node = node[1]
     if node[0] in ("ref", "name", "range"):
         return ev.rect_of(node)
+    if node[0] == "const" and isinstance(node[1], Array) and node[1].rect is not None:
+        return node[1].rect
     if node[0] == "func" and node[1] in fx._GIVES_CELLS:
         v = ev.keep(node)
         if isinstance(v, Array) and v.rect is not None:

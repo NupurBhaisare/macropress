@@ -706,6 +706,29 @@ class ExcelModel(Runner):
         with self.assertRaisesRegex(VBANotImplemented, "number format Excel gives"):
             self.prints('Range("A1").Formula = "=DATE(2024,1,1)+PMT(0.1,10,1000)"')
 
+    def test_worksheet_functions_from_vba_answer_as_excel_does(self):
+        body = (
+            "For i = 1 To 5\nCells(i, 1).Value = i\nNext\n"
+            'Debug.Print Application.Sum(Range("A1:A5"), Empty), WorksheetFunction.RoundUp(1.21, 1), '
+            "WorksheetFunction.Round(2.5, 0), Round(2.5, 0)\n"
+            'Debug.Print IsError(Application.Match(9, Range("A1:A5"), 0)), CStr(Application.VLookup(9, Range("A1:B5"), 2, 0))\n'
+            'v = Application.Transpose(Array(1, 2, 3))\nw = Application.Transpose(Range("A1:A5"))\n'
+            "Debug.Print UBound(v, 1), UBound(v, 2), UBound(w), TypeName(v(2, 1))\n"
+            'Debug.Print [A2+A3], Evaluate("SUM(A1:A3*2)"), TypeName([A1]), Evaluate("A4").Value, CStr(Evaluate("1/0"))\n'
+            "On Error Resume Next\nx = WorksheetFunction.Match(9, Array(1, 2), 0)\nDebug.Print Err.Number\nErr.Clear\n"
+            "x = Application.Year(1)\nDebug.Print Err.Number"
+        )
+        # Application hands an error back, WorksheetFunction raises 1004; Round is Excel's (half away from 0); a range
+        # transposed is a row of one dimension; [ ] and Evaluate work a formula out whole; YEAR is VBA's, not Excel's
+        self.assertEqual(
+            self.prints(body),
+            ["15 1.3 3 2", "True Error 2042", "3 1 5 Double", "5 12 Range 4 Error 2007", "1004", "438"],
+        )
+        # early-bound WorksheetFunction turns TRUE into -1 for a parameter declared a number, late-bound does not:
+        # which one a call is cannot be told, and the value is not guessed
+        with self.assertRaisesRegex(VBANotImplemented, "may turn into another type"):
+            self.prints("x = WorksheetFunction.RoundUp(True, 0)")
+
     def test_a_formula_that_wants_one_value_takes_its_own_row_or_column_of_a_range(self):
         body = (
             'Range("F1").Value = 1\nRange("F2").Value = 2\nRange("F3").Value = 3\n'

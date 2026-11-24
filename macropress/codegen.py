@@ -137,7 +137,7 @@ NOT_MODELLED = {
             "Shell SendKeys AppActivate Beep Command GetSetting GetAllSettings SaveSetting DeleteSetting LoadPicture"
         ),
         "it shows a UserForm": "Load Unload",
-        "it runs code or a formula held in text": "Evaluate Run ExecuteExcel4Macro",
+        "it runs code held in text": "Run ExecuteExcel4Macro",
         "it is not covered yet": (
             "StrConv Filter FormatCurrency FormatNumber FormatPercent FormatDateTime MonthName WeekdayName DatePart Hex "
             "Oct ChrW AscW Atn Cos Sin Tan Pmt PPmt IPmt PV FV NPV IRR MIRR NPer Rate DDB SLN SYD Partition QBColor GoSub"
@@ -217,7 +217,7 @@ BINOPS = {
 COMPARISONS = {"eq", "ne", "lt", "gt", "le", "ge", "like"}
 
 GLOBAL_MEMBERS = {name.split("_", 1)[1] for name in dir(Globals) if name.startswith(("get_", "m_"))}
-SHEET_RELATIVE = {"range", "cells", "rows", "columns"}  # in a sheet's module, these are that sheet's
+SHEET_RELATIVE = {"range", "cells", "rows", "columns", "evaluate"}  # in a sheet's module, these are that sheet's
 RESERVED = {"rt", "xl", "v", "w", "st", "pc", "os", "sys", "BUTTONS", "MACROS"}
 
 
@@ -800,7 +800,8 @@ class ProcGen:
         raise VBACompileError(f"{self.proc.name}: invalid use of Me keyword")
 
     def global_ref(self, name):
-        """A name usable without a qualifier. In a sheet's module, Range, Cells, Rows and Columns are that sheet's."""
+        """A name usable without a qualifier. In a sheet's module, Range, Cells, Rows, Columns and Evaluate (so [A1])
+        are that sheet's."""
         if self.module.kind == "document" and name.lower() in SHEET_RELATIVE:
             return f"rt.scope(xl, {self.conv.module_id(self.module)}).{name}"
         return f"xl.{name}"

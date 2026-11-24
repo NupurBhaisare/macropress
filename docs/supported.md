@@ -64,19 +64,42 @@ Some come with limits, and stop the run outside them:
 
 | Object | Members |
 | --- | --- |
-| Application (and the globals) | ActiveCell, ActiveSheet, ActiveWorkbook, Calculate, Calculation, Cells, Columns, CutCopyMode, DisplayAlerts, DisplayStatusBar, EnableEvents, Intersect, Range, Rows, ScreenUpdating, Selection, Sheets, StatusBar, ThisWorkbook, Wait, Workbooks, WorksheetFunction, Worksheets |
+| Application (and the globals) | ActiveCell, ActiveSheet, ActiveWorkbook, Calculate, Calculation, Cells, Columns, CutCopyMode, DisplayAlerts, DisplayStatusBar, EnableEvents, Evaluate (and `[A1+1]`), Intersect, Range, Rows, ScreenUpdating, Selection, Sheets, StatusBar, ThisWorkbook, Wait, Workbooks, WorksheetFunction, Worksheets, and the worksheet functions by name (`Application.Match`, below) |
 | Workbook | Activate, ActiveSheet, Name, Names, Protect, ProtectStructure, ProtectWindows, Save (the copy is saved when the run ends), Sheets, Unprotect, Worksheets |
 | Sheets, Worksheets | Count, Item, Select (selecting several sheets groups them, as in Excel) |
-| Worksheet | Activate, AutoFilterMode, Calculate, Cells, CodeName, Columns, FilterMode, Index, Name (renaming a sheet updates the formulas and names that refer to it), Parent, Paste, Protect, ProtectContents, ProtectDrawingObjects, Protection (its Allow... options), ProtectionMode, ProtectScenarios, Range, Rows, Select, ShowAllData, Sort, Unprotect, UsedRange, Visible |
+| Worksheet | Activate, AutoFilterMode, Calculate, Cells, CodeName, Columns, Evaluate, FilterMode, Index, Name (renaming a sheet updates the formulas and names that refer to it), Parent, Paste, Protect, ProtectContents, ProtectDrawingObjects, Protection (its Allow... options), ProtectionMode, ProtectScenarios, Range, Rows, Select, ShowAllData, Sort, Unprotect, UsedRange, Visible |
 | Range | Activate, Address, AutoFill, AutoFilter, AutoFit (does nothing: widths are not modelled), Calculate, Cells, Clear, ClearContents, Column, Columns, Copy, Count, CurrentRegion, Cut, End, EntireColumn, EntireRow, FillDown, FillLeft, FillRight, FillUp, Formula, Formula2, Formula2R1C1, FormulaR1C1, Hidden, Item, Locked, NumberFormat, Offset, Parent, PasteSpecial, Resize, Row, Rows, Select, Sort, Text, Value, Value2, Worksheet |
 | Sort (Worksheet.Sort) | SortFields (Add, Add2, Clear, Count), SetRange, Header, MatchCase, Orientation, SortMethod, Apply |
 | Name | Name, RefersTo, RefersToRange |
-| WorksheetFunction | AverageIf, AverageIfs, Choose, CountA, CountIf, CountIfs, Find, HLookup, Index, Lookup, Match, Max, MaxIfs, Min, MinIfs, Search, Sum, SumIf, SumIfs, VLookup, XLookup, XMatch |
+| WorksheetFunction | Every worksheet function MacroPress calculates that Excel lets VBA reach by name (below), and Transpose |
 
 Within those, a few cases stop the run: `PasteSpecial` with `Transpose`, `SkipBlanks` or an `Operation`; `Sort` by
 colour, with a custom order or left to right; `AutoFilter` with criteria other than values, comparisons and wildcards;
-`Address` in R1C1 style; `XLookup` and `VLOOKUP` with approximate matching; ranges with several areas
-(`Range("A1:B2,D1:D5")`, `Union`); and the cases of number formats, protection, fills and cuts listed below.
+`Address` in R1C1 style; ranges with several areas (`Range("A1:B2,D1:D5")`, `Union`); and the cases of number formats,
+protection, fills, cuts and worksheet functions listed below.
+
+### Worksheet functions from VBA
+
+- **`WorksheetFunction.X` and `Application.X`** reach every function listed under Formulas that Excel lets VBA call by
+  name; a name with a dot drops it (`WorksheetFunction.StDev_S`). Excel's own that VBA has its own for, or none
+  (`Len`, `Year`, `Abs`, `Mod`, `If`, `IfS`), are error 438, as in Excel. A wrong number of arguments is error 1004.
+- **An error** the function comes to is error 1004 through `WorksheetFunction`, and comes back as its value through
+  `Application`, which is what `IsError(Application.Match(...))` relies on (`CStr` of it is `Error 2042`).
+- **Arguments** are VBA's values as a formula has them: a `Range` is its cells, an array an array of the formula (one
+  of one dimension a row), a `Date` its serial number, `Empty` an argument left empty (`Application.Max(Empty, -1)` is
+  0). `Application.X`, and `WorksheetFunction` held in an `Object`, go through a range or an array given for one value
+  value by value and hand back an array (`Application.RoundUp(Array(1.2, 2.5), 0)`). `WorksheetFunction.X` written out
+  turns an argument into the type its parameter is declared as first (`TRUE` into -1, a range of several cells into
+  error 13, `TextJoin` of several texts into the last); since which of the two a call is cannot be told from the
+  object, those arguments (`TRUE`, a range or an array for one value, text such as `"5%"`) stop the run there.
+- **What comes back**: a `Double`, a `String`, a `Boolean`; cells a function hands back as a `Range`
+  (`Application.Index(Range("A1:B5"), 0, 2)`); an array as a VBA array from 1, one row of one dimension and more of
+  two. `Transpose` reads a range as `Value2` does (a date is a number) and hands numbers back as `Double`s.
+  `WorksheetFunction.Round` is Excel's (`Round(2.5, 0)` is 3), not VBA's.
+- **`Evaluate`**, `Application.Evaluate`, `Worksheet.Evaluate` and `[...]` work a formula's text out against the
+  active sheet (a sheet's own, in its module), its ranges taken whole: `Evaluate("SUM(A1:A3*2)")` is 12. A reference
+  is a `Range`, an array a VBA array, an error its value; text that is no formula, or longer than 255 characters, is
+  `#VALUE!`. A formula MacroPress cannot work out stops the run, as one in a cell does when read.
 
 ## Cells and their number formats
 

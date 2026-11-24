@@ -2162,6 +2162,137 @@ SHEETS += [("RD", [8] * 22, [[2], ["3"], [True], [None], [5]]),
                               [400, (d("2025-01-01"), "date"), 400], [500, (d("2025-07-01"), "date"), 500], [], ["x"]])]
 SB_ROWS = [["K", "G", None, 3]] + [[2**k, "xy"[k % 2], None, ["x", True, None, 5, 1][k] if k < 5 else None] for k in range(8)]
 SHEETS += [(f"SB{k}", [8] * 12, SB_ROWS) for k in range(1, 11)]
+# ------------------------------------------------------------------------------------- group 2.5: from VBA
+# VB's A1:A5 hold 1 to 5, B1:B5 a to e, C1:C3 dates, D1:D2 1.25 and 2.5; VB2's A1 100. Which names VBA reaches is
+# asked late-bound (an Object), where a name Excel does not have is error 438, not a compile error that would stop
+# the module.
+VB_NAMES = """ABS AGGREGATE AND AVERAGE AVERAGEIF AVERAGEIFS CEILING CEILING.MATH CEILING.PRECISE CHAR CHOOSE CLEAN CODE
+    COLUMN COLUMNS CONCAT CONCATENATE COUNT COUNTA COUNTBLANK COUNTIF COUNTIFS DATE DATEDIF DAY DAYS DAYS360 DB DDB EDATE
+    EOMONTH ERROR.TYPE EVEN EXACT EXP FIND FLOOR FLOOR.MATH FLOOR.PRECISE FV HLOOKUP HOUR IF IFERROR IFNA IFS INDEX
+    INDIRECT INT IPMT IRR ISBLANK ISERR ISERROR ISEVEN ISLOGICAL ISNA ISNONTEXT ISNUMBER ISO.CEILING ISODD ISOWEEKNUM
+    ISREF ISTEXT LARGE LEFT LEN LN LOG LOG10 LOOKUP LOWER MATCH MAX MAXIFS MEDIAN MID MIN MINIFS MINUTE MOD MODE
+    MODE.SNGL MONTH MROUND N NA NETWORKDAYS NETWORKDAYS.INTL NOT NOW NPER NPV ODD OFFSET OR PERCENTILE PERCENTILE.EXC
+    PERCENTILE.INC PI PMT POWER PPMT PRODUCT PROPER PV QUARTILE QUARTILE.EXC QUARTILE.INC QUOTIENT RANK RANK.AVG RANK.EQ
+    RATE REPLACE REPT RIGHT ROUND ROUNDDOWN ROUNDUP ROW ROWS SEARCH SECOND SIGN SLN SMALL SORT SQRT STDEV STDEV.P STDEV.S
+    STDEVP SUBSTITUTE SUBTOTAL SUM SUMIF SUMIFS SUMPRODUCT SWITCH SYD T TEXTJOIN TIME TODAY TRIM TRUNC TYPE UNICHAR
+    UNICODE UNIQUE UPPER VALUE VAR VAR.P VAR.S VARP VLOOKUP WEEKDAY WEEKNUM WORKDAY WORKDAY.INTL XIRR XLOOKUP XMATCH XNPV
+    YEAR YEARFRAC TRANSPOSE TEXT""".split()
+
+
+def vb_member(name):
+    return name.replace(".", "_")
+
+
+# Asked by calling each with one argument, late-bound: an Object, which compiles whatever the name, and errs with 438
+# at run time where Excel has none. A probe VBA might not compile (an early-bound call with the wrong number of
+# arguments, indexing what a call returns, a variable named as a module is) stops Excel at a dialog: none here.
+# COUNTBLANK, TRANSPOSE and TEXT given 1 are each a test of their own, as MacroPress stops at them.
+ALONE = ("COUNTBLANK", "TRANSPOSE", "TEXT")
+GROUPED = [n for n in VB_NAMES if n not in ALONE]
+for k in range(0, len(GROUPED), 15):
+    chunk = GROUPED[k : k + 15]
+    T("TFromVBA", f"vb_wf{k // 15 + 1:02d}", "Dim wf As Object", "Set wf = Application.WorksheetFunction",
+      *[x for n in chunk for x in ("Err.Clear", f"x = wf.{vb_member(n)}(1)", "X: (Err.Number = 438)")])
+    # Application's own Rows, Columns, Left and Value answer before the worksheet functions do
+    app_chunk = [n for n in chunk if n not in ("ROWS", "COLUMNS", "LEFT", "VALUE")]
+    T("TFromVBA", f"vb_app{k // 15 + 1:02d}", "Dim app As Object", "Set app = Application",
+      *[x for n in app_chunk for x in ("Err.Clear", f"x = app.{vb_member(n)}(1)", "X: (Err.Number = 438)")])
+for n in ALONE:
+    T("TFromVBA", f"vb_wf_{n.lower()}", "Dim wf As Object", "Set wf = Application.WorksheetFunction", "Err.Clear", f"x = wf.{vb_member(n)}(1)",
+      "X: (Err.Number = 438)")
+    T("TFromVBA", f"vb_app_{n.lower()}", "Dim app As Object", "Set app = Application", "Err.Clear", f"x = app.{vb_member(n)}(1)",
+      "X: (Err.Number = 438)")
+VB = W("VB")
+VBR = {k: f'{VB}.Range("{k}")' for k in ["A1:A5", "A1:A3", "B1:B5", "B1:B3", "A1:B5", "A1:B2", "C1:C3", "A1", "D1:D2", "A2"]}
+WSF = "Application.WorksheetFunction"
+# what a function is given: VBA's values as a formula has them
+T("TFromVBA", "vb_args", f"V: {WSF}.Sum(Empty, 1)", f"V: {WSF}.Max(DateSerial(2024, 1, 5), 1)", f"V: {WSF}.Sum(CCur(1.5), 1)",
+  f'V: {WSF}.Sum(Array(1, "2", True))', f'V: {WSF}.RoundUp("1.2", 0)', f"V: {WSF}.Days360(DateSerial(2024, 1, 31), DateSerial(2024, 3, 31))",
+  f"V: {WSF}.EoMonth(DateSerial(2024, 1, 15), 0)", f"S: TypeName({WSF}.EoMonth(DateSerial(2024, 1, 15), 0))", f'V: {WSF}.Proper("it\'s")',
+  f"V: {WSF}.IsNumber({VBR['A1']})", f"V: {WSF}.Large({VBR['A1:A5']}, 2)", f"V: {WSF}.Median(Array(3, 1, 2))",
+  f"V: {WSF}.Weekday(DateSerial(2024, 1, 5))", f"V: {WSF}.Pmt(0.05 / 12, 360, 200000)")
+T("TFromVBA", "vb_args2", f"V: {WSF}.Sum({VBR['A1:A5']}, 10)", f'V: {WSF}.CountBlank({VBR["A1:B5"]})', f"V: {WSF}.Subtotal(9, {VBR['A1:A5']})",
+  f"V: {WSF}.Product(Array(2, 3), 4)",
+  f'V: {WSF}.Substitute("a-b", "-", "+")', f"V: {WSF}.NetworkDays(DateSerial(2024, 1, 1), DateSerial(2024, 1, 31))",
+  f"V: {WSF}.Rank_Eq(2, {VBR['A1:A5']})", f"V: {WSF}.StDev_S(Array(1, 2, 3, 4))", f"V: {WSF}.Floor_Math(-5.5, 2)", f"V: {WSF}.Quotient(7, 2)",
+  f"V: {WSF}.IsEven(4)", f"V: {WSF}.Ln(1)", f"V: {WSF}.Power(2, 10)")
+T("TFromVBA", "vb_args3", f"S: TypeName(Application.RoundUp({VBR['D1:D2']}, 0))",
+  "S: TypeName(Application.RoundUp(Array(1.2, 2.5), 0))", "v = Application.RoundUp(Array(1.2, 2.5), 0)", "N: LBound(v)", "N: UBound(v)",
+  "V: v(LBound(v))", f"V: {WSF}.Sum(Null, 1)", f"E: x = {WSF}.Sum(Null, 1)", f'V: {WSF}.Max("5", 3)', f'V: {WSF}.Count("5", True, "a")',
+  f'V: {WSF}.Max(Array("5", 3))', f"V: {WSF}.Average({VBR['A1:A5']}, Empty)", f"V: {WSF}.CountA(Empty, 1)", f"V: {WSF}.Min(CVErr(xlErrNA), 1)")
+# what goes wrong: WorksheetFunction raises 1004, Application hands the error back
+T("TFromVBA", "vb_errors", "Dim wf As Object", f"Set wf = {WSF}", f"E: x = {WSF}.Match(99, Array(1, 2), 0)", "V: Application.Match(99, Array(1, 2), 0)",
+  "V: IsError(Application.Match(99, Array(1, 2), 0))", 'V: Application.RoundUp("a", 0)',
+  'V: Application.Sum("a", 1)', f"V: Application.VLookup(35, {VBR['A1:B5']}, 2, False)", f"V: Application.VLookup(3, {VBR['A1:B5']}, 2, False)",
+  "V: Application.Index(Array(1, 2), 3)", "V: Application.EoMonth(-1, 0)", "V: Application.Large(Array(1, 2), 5)",
+  "V: Application.Ln(0)", "Err.Clear", "x = wf.Proper(1, 2, 3)", "X: Err.Description")
+T("TFromVBA", "vb_errors2", "Dim wf As Object", f"Set wf = {WSF}", "E: x = wf.Round(1)", "E: x = Application.Round(1)", "V: Application.Round(1)",
+  "E: x = wf.VLookup(1)", "E: x = wf.Sum()", "V: Application.Sum()", "E: x = wf.Proper(1, 2)", "V: Application.Proper(1, 2)",
+  "E: x = wf.Year(1)", "E: x = Application.Year(1)", "E: x = wf.Len(\"ab\")", "E: x = Application.Len(\"ab\")")
+# what comes back: Double, String, Boolean, a Range for cells, an array from 1
+T("TFromVBA", "vb_results", f"S: TypeName({WSF}.Proper(\"ab\"))", f"S: TypeName({WSF}.IsNumber(1))", f"S: TypeName({WSF}.Sum(1))",
+  f"S: TypeName({WSF}.Index({VBR['A1:A5']}, 2))", f"S: TypeName(Application.Index({VBR['A1:A5']}, 2))", f"V: Application.Index({VBR['A1:A5']}, 2)",
+  f"S: TypeName(Application.Match(2, {VBR['A1:A5']}, 0))", f"S: TypeName(Application.CountIf({VBR['A1:A5']}, \">2\"))",
+  f"S: TypeName(Application.Choose(2, {VBR['A1']}, {VBR['A2']}))", f"S: TypeName(Application.XLookup(2, {VBR['A1:A5']}, {VBR['B1:B5']}))",
+  "S: TypeName(Application.Pmt(0.05, 10, 1000))", "S: TypeName(Application.Date(2024, 1, 5))", "S: TypeName(Application.Weekday(45296))",
+  "S: TypeName(Application.Trim(\" a \"))", "S: TypeName(Application.And(True, 1))")
+# arrays: Transpose, and Index given 0 for a row or a column
+T("TFromVBA", "vb_transpose", "v = Application.Transpose(Array(1, 2, 3))", "N: LBound(v, 1)", "N: UBound(v, 1)", "E: n = UBound(v, 2)", "V: v(2, 1)",
+  f"w = Application.Transpose({VBR['A1:A5']})", "N: LBound(w)", "N: UBound(w)", "E: n = UBound(w, 2)", "V: w(2)",
+  f"t = Application.Transpose({VBR['A1:B2']})", "N: UBound(t, 1)", "N: UBound(t, 2)", "V: t(1, 2)", f"S: TypeName({WSF}.Transpose(Array(1, 2)))")
+T("TFromVBA", "vb_index", f"a = {VBR['A1:B5']}.Value", "i = Application.Index(a, 0, 2)", "N: LBound(i, 1)", "N: UBound(i, 1)", "N: UBound(i, 2)",
+  "V: i(2, 1)", "j = Application.Index(a, 2, 0)", "N: LBound(j)", "N: UBound(j)", "E: n = UBound(j, 2)", "V: j(2)", "V: Application.Index(a, 3, 1)",
+  "k = Application.Index(Array(10, 20, 30), 0, 2)", "V: k", "V: Application.Index(Array(10, 20, 30), 2)")
+T("TFromVBA", "vb_transpose2", f"c = Application.Transpose({VBR['C1:C3']})", "S: TypeName(c(1))", "V: c(1)",
+  f'{VB}.Range("F1").Value = "\'" & String(300, "x")', f'u = Application.Transpose({VB}.Range("F1:F2"))', "N: Len(u(1))", "S: TypeName(u(2))",
+  "m = Application.Transpose(Application.Transpose(Array(1, 2, 3)))", "N: LBound(m)", "N: UBound(m)", "E: n = UBound(m, 2)",
+  'e = Application.Transpose(Array(1, "a", True, Empty))', "S: TypeName(e(4, 1))", "S: TypeName(e(3, 1))", "S: TypeName(e(2, 1))")
+# WorksheetFunction.Round is Excel's, not VBA's
+T("TFromVBA", "vb_round", f"N: {WSF}.Round(2.5, 0)", "N: Round(2.5, 0)", f"N: {WSF}.Round(-2.5, 0)", f"N: {WSF}.Round(1.005, 2)",
+  f"N: {WSF}.Round(2.675, 2)", f"N: {WSF}.Round(1234.5, -2)", "N: Application.Round(0.125, 2)", "N: Round(0.125, 2)", f"N: {WSF}.RoundUp(1.21, 1)",
+  f"N: {WSF}.RoundDown(-1.29, 1)", f"N: {WSF}.Round(4.35 * 100, 0)", f"N: {WSF}.MRound(7.5, 5)", f"V: {WSF}.Round(\"2.5\", 0)")
+# Evaluate and [ ], against the active sheet
+EV = [f'{VB}.Activate']
+T("TFromVBA", "vb_eval", *EV, 'S: TypeName(Evaluate("1+1"))', 'V: Evaluate("1+1")', 'V: Evaluate("=1+1")', 'S: TypeName(Evaluate("A1"))',
+  'V: Evaluate("SUM(A1:A3)")', 'V: Evaluate("SUM(A1:A3*2)")', 'S: TypeName(Evaluate("A1:A3*2"))', 'V: Evaluate("1/0")', 'V: Evaluate("nosuch(")',
+  'V: Evaluate("""abc""")', 'S: TypeName(Evaluate("DATE(2024,1,5)"))', 'V: Evaluate("COUNTIF(B1:B5,""a"")")', 'V: Evaluate("")',
+  'V: Evaluate("MAX(A1:A5)")', 'S: TypeName(Evaluate("INDEX(A1:A5,2)"))')
+# [ ] in a module of its own: MacroPress reads VBA with a grammar of its own for them
+T("TBracket", "vb_eval2", *EV, "V: [1+1]", "V: [SUM(A1:A3)]", "S: TypeName([A1])", "V: [A1:A3].Count", 'V: Application.Evaluate("A2")',
+  f'V: {W("VB2")}.Evaluate("A1")', 'V: Evaluate("VB2!A1")', 'V: Evaluate("1" & String(300, "0"))', 'V: [A2+A3]', 'V: [INDEX(A1:A5,4)]',
+  'V: Evaluate("A1:A5")(2)', 'V: Evaluate("SUMPRODUCT((B1:B5=""a"")*A1:A5)")', 'V: Evaluate("{1,2,3}")(3)', 'V: [TRUE]', 'V: [A1].Value')
+T("TFromVBA", "vb_eval3", *EV, 'e = Evaluate("{1,2,3}")', "N: LBound(e)", "N: UBound(e)", "E: n = UBound(e, 2)", 'f = Evaluate("{1;2;3}")',
+  "N: UBound(f, 1)", "N: UBound(f, 2)", 'g = Evaluate("A1:A3*2")', "N: UBound(g, 1)", "N: UBound(g, 2)", "V: g(3, 1)", 'r3 = Evaluate("ROW(1:3)")',
+  "V: r3(2, 1)", 'V: Evaluate("A1:B2").Address', 'V: Evaluate("TODAY()") > 40000')
+T("TFromVBA", "vb_eval4", *EV, 'V: Evaluate("NOW()-TODAY()") < 1', 'V: Evaluate("A1+")', 'V: Evaluate("=")', 'V: Evaluate("1+""a""")',
+  'V: Evaluate("ISNUMBER(A1)")', 'V: Evaluate("UPPER(B1)")', 'V: Evaluate("EOMONTH(C1,0)")', 'V: Evaluate("NA()")',
+  'V: Evaluate("IFERROR(1/0,""x"")")', 'S: TypeName(Evaluate("{1,2;3,4}"))', 'V: Evaluate("SUM({1,2;3,4})")', 'V: Evaluate("A1&B1")',
+  'V: Evaluate("TRUE")', 'V: Evaluate(" 1 + 1 ")', 'V: Evaluate("-A2")')
+# what the first answers left open: Application given TRUE, an INDEX of one value, TEXTJOIN given a range
+T("TFromVBA2", "vb_more", "V: Application.RoundUp(True, 0)", "V: Application.Sum(True, 1)", f'V: Application.TextJoin("-", True, {VBR["B1:B3"]})',
+  "k = Application.Index(Array(10, 20, 30), 0, 2)", "E: n = UBound(k, 1)", "E: n = UBound(k, 2)", "N: UBound(k, 1)",
+  f"S: Application.Index({VBR['A1:B5']}, 0, 2).Address", 'V: Application.IsNumber("1")', "V: Application.Weekday(True)",
+  "V: Application.Max(Empty, -1)", "V: Application.Sum(Null, 1)", "S: TypeName(Application.RoundUp(Empty, 0))",
+  f"V: {WSF}.Sum({VBR['A1:A5']}, Array(10, 20))", 'V: Application.Average(Array(1, "x", True))')
+T("TFromVBA2", "vb_more2", "Dim wf As Object", f"Set wf = {WSF}", 'V: Application.Substitute(True, "R", "x")', "V: wf.IsNumber(\"1\")",
+  f"V: wf.CountBlank({VBR['A1:B5']})", "V: wf.Median(Array(1, 2), 3)", "V: wf.Large(Array(5, 3, 9), 1)", "S: TypeName(Array(1, 2))", "Dim dd(1) As Double", "S: TypeName(dd)",
+  "vdate = Application.Transpose(Array(DateSerial(2024, 1, 5)))", "S: TypeName(vdate(1, 1))", "V: vdate(1, 1)",
+  "vcur = Application.Transpose(Array(CCur(1.5)))", "S: TypeName(vcur(1, 1))", "S: TypeName(Application.Index(Array(1, 2), 0, 1))")
+# one each: what early-bound WorksheetFunction.X does with values it turns into its parameters' types first, and what
+# late-bound and Application.X do with them, where MacroPress does not answer which
+ONE_EACH = [f"V: {WSF}.RoundUp(True, 0)", f'V: {WSF}.TextJoin("-", True, {VBR["B1:B3"]})', f'V: {WSF}.TextJoin("-", True, Array("x", "", "y"))',
+            f"V: {WSF}.RoundUp({VBR['D1:D2']}, 0)", f'E: x = {WSF}.RoundUp("a", 0)', f"V: {WSF}.Large({VBR['A1:A5']}, True)",
+            "V: Application.CountBlank(Array(1, Empty))", "V: Application.Rank(2, Array(1, 2, 3))",
+            f'V: {WSF}.TextJoin("-", True, "a", "", "b")']
+for k, probe in enumerate(ONE_EACH, 1):
+    T("TFromVBA2", f"vb_one{k}", probe)
+for k, probe in enumerate([f"E: x = wf.RoundUp({VBR['D1:D2']}, 0)", "V: wf.RoundUp(True, 0)", 'V: wf.Substitute(True, "r", "x")',
+                           "E: x = wf.CountBlank(Array(1, Empty))", "E: x = wf.Rank(2, Array(1, 2, 3))", f"E: x = wf.Large({VBR['A1:A5']}, True)",
+                           'E: x = wf.TextJoin("-", True, "a", "b")', 'V: wf.TextJoin("-", True, "a", "b")'], 1):
+    T("TFromVBA2", f"vb_late{k}", "Dim wf As Object", f"Set wf = {WSF}", probe)
+SHEETS += [("VB", [8] * 8, [[1, "a", (d("2024-01-05"), "date"), 1.25], [2, "b", (d("2024-02-29"), "date"), 2.5], [3, "c", (d("2024-12-31"), "date")],
+                            [4, "d"], [5, "e"]]),
+           ("VB2", [8], [[100]])]
 SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
 def sheets(index):

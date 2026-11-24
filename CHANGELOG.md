@@ -68,6 +68,12 @@ The first public release.
   a General cell takes the number format Excel gives it (`DATE` a date, `PMT` a currency, `IRR` a percentage), so its
   `Value` is a `Date` or a `Currency` as in Excel. `IRR`, `XIRR` and `RATE`, whose answers stop wherever Excel's
   search took them, are left for Excel.
+- Worksheet functions from VBA ([roadmap](docs/roadmap.md), 2.5), recorded from Excel first (63 more tests in the
+  parity suite): every function MacroPress calculates is reached as `WorksheetFunction.X` and as `Application.X`
+  (`StDev_S` for `STDEV.S`), where Excel lets VBA reach it, and error 438 where it does not. `Application.X` hands
+  an error back as its value, `WorksheetFunction.X` raises error 1004. Arrays come back from 1, ranges of cells as a
+  `Range`; `Transpose`; `WorksheetFunction.Round` is Excel's. `Evaluate`, `Application.Evaluate`,
+  `Worksheet.Evaluate` and `[A1+1]` work a formula's text out against the active sheet.
 
 ### Fixed
 
@@ -85,6 +91,9 @@ Found by running those macros in both Excel and MacroPress and comparing every a
 - **Errors**: a member asked of a value that is no object is error 424, and of `Nothing` error 91, where the run used
   to stop with a fault of the converter. A constant MacroPress does not know (`vbSomething`) is refused, where it used
   to be read as an empty variable. A procedure that calls itself without end stops with error 28.
+- **From VBA**: `WorksheetFunction.Sum`, `Max`, `Min` and `CountA` passed over `Empty`, which Excel counts as 0;
+  `[A1+1]` stopped the conversion of its module, where `[A1]` worked; `TypeName` of a `Double` array was `Variant()`.
+  `=SUM()`, `=ROUND(1)` and other core functions with the wrong number of arguments are refused as Excel refuses them.
 - **Formulas entered by a macro**: `=TODAY()` and `=NOW()` take Excel's date formats, where the cell stayed General;
   a function given the wrong number of arguments, or `#SPILL!` or `#CALC!` typed in, is refused as Excel refuses it;
   the file keeps `_xlfn.` before the names Excel needs it on (`CEILING.MATH`, `STDEV.S`, `AGGREGATE`, ...), where

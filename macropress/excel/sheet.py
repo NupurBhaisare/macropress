@@ -703,6 +703,11 @@ class Sheet(VBAObject):
         self.changed = True
         self.book.rows_shown_changed(self)
 
+    def m_evaluate(self, name):
+        from .functions import evaluate  # noqa: PLC0415 - functions imports range, which imports this module
+
+        return evaluate(self, name)
+
     def m_calculate(self):
         self.book.recalc_all()
         return True

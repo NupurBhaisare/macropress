@@ -18,7 +18,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
 | 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font` (1.1, 1.3, 1.4 and 1.5 are done) | nothing | small, five pieces |
-| 2 | [Worksheet functions](#2-worksheet-functions) | `Application.Match`, `FILTER`, `LET` (2.1 to 2.4 are done) | nothing | large, ships in slices |
+| 2 | [Worksheet functions](#2-worksheet-functions) | `FILTER`, `LET`, `TEXT` (2.1 to 2.5 are done) | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
 | 5 | [Appearance](#5-appearance) | `Font`, `Interior`, `Borders`, `ColumnWidth`, `Merge` | 1, 4 | large |
@@ -229,6 +229,17 @@ formula takes from the cells it reads (group 4); fractional periods in `DB` and 
   first date. `DB` rounds its rate to three decimals.
 
 ### 2.5 From VBA
+
+**Status**: done, recorded from Excel first. What it settled: of the functions MacroPress calculates, 46 VBA cannot
+reach by name (error 438: `Len`, `Year`, `Abs`, `Mod`, `If`, `IfS`, `Switch`...). A wrong number of arguments is error
+1004, through `Application` too. `Application.X`, and `WorksheetFunction` held in an `Object`, take VBA's values as a
+formula takes them (`TRUE` is 1, a range for one value is gone through value by value); `WorksheetFunction.X` written
+out turns them into the types its parameters are declared as first (`TRUE` is -1, a range for one value error 13,
+`TextJoin` of several texts the last of them, on the Mac). `Empty` is an argument left empty. A row comes back in one
+dimension. `Transpose` reads `Value2` and hands numbers back as `Double`s, text of 300 characters whole. `Evaluate`
+works a formula out whole, a reference is a `Range`, text longer than 255 characters `#VALUE!`. Left open: which of
+the two a `WorksheetFunction` call is, which the object does not tell (refused where they part); `Transpose` of one
+value; Excel for Mac names a Variant array `V()` where Windows names it `Variant()`.
 
 - `WorksheetFunction.X` raises error 1004 where the function gives an error. `Application.X` returns the error
   value, which is what `IsError(Application.Match(…))` relies on. Both are needed.

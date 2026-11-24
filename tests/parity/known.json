@@ -3,6 +3,9 @@
   {
    "why": "Whole numbers. MacroPress has one whole-number type where VBA has Integer and Long: TypeName goes by the number's size, and two Integers whose sum or product passes 32,767 give the number where VBA stops with error 6.",
    "tests": {
+    "T_vb_eval2": {
+     "4": "[Integer:3]"
+    },
     "T_cut_refs": {
      "8": "[Integer:0]"
     },
@@ -180,33 +183,15 @@
     "T_timecell": {
      "4": "[m/d/yyyy h:mm]"
     },
-    "T_wd_formats": {
-     "1": "[m/d/yyyy]",
-     "2": "[m/d/yyyy]",
-     "3": "[m/d/yyyy h:mm]",
-     "8": "[m/d/yyyy]"
-    },
     "T_wd_formats2": {
      "10": "[m/d/yyyy]",
      "13": "[m/d/yyyy]",
      "15": "[m/d/yyyy]"
     },
-    "T_wd_formats3": {
-     "1": "[m/d/yyyy]",
-     "2": "[m/d/yyyy]",
-     "4": "[m/d/yyyy]",
-     "5": "[m/d/yyyy]",
-     "12": "[m/d/yyyy]",
-     "14": "[m/d/yyyy]"
-    },
     "T_wd_formats4": {
      "7": "[m/d/yyyy]",
      "8": "[m/d/yyyy]",
      "9": "[m/d/yyyy]"
-    },
-    "T_wd_formats5": {
-     "11": "[m/d/yyyy]",
-     "14": "[m/d/yyyy h:mm]"
     },
     "T_wd_formats6": {
      "1": "[m/d/yyyy]",
@@ -237,7 +222,7 @@
      "2": 1004.0,
      "4": 1004.0,
      "5": "[Out]",
-     "6": "[Integer:180]"
+     "6": "[Integer:182]"
     }
    }
   },
@@ -245,15 +230,27 @@
    "why": "The format a formula takes from the cells it reads. Entered in a General cell, =A1, =A1+1, =MAX(A1:A3), =SUM(A1:A3) and =AVERAGE(A1:A3) take the date format of A1; MacroPress gives the formats of DATE, TIME, NOW, TODAY, PMT, IRR and the like, and leaves a formula that calls none of them General (not modelled yet).",
    "tests": {
     "T_wd_formats": {
+     "1": "[m/d/yyyy]",
+     "2": "[m/d/yyyy]",
+     "3": "[m/d/yyyy h:mm]",
+     "8": "[m/d/yyyy]",
      "10": "[General]",
      "11": "[General]",
      "15": "[General]"
     },
     "T_wd_formats3": {
-     "9": "[General]"
+     "1": "[m/d/yyyy]",
+     "2": "[m/d/yyyy]",
+     "4": "[m/d/yyyy]",
+     "5": "[m/d/yyyy]",
+     "9": "[General]",
+     "12": "[m/d/yyyy]",
+     "14": "[m/d/yyyy]"
     },
     "T_wd_formats5": {
-     "12": "[General]"
+     "11": "[m/d/yyyy]",
+     "12": "[General]",
+     "14": "[m/d/yyyy h:mm]"
     }
    }
   },
@@ -272,6 +269,29 @@
     "T_tx_code": {
      "7": "[String:é]",
      "8": "[Double:233]"
+    }
+   }
+  },
+  {
+   "why": "TypeName of an array. Excel for Mac names a Variant array V() and a Double one D(); VBA on Windows, and MacroPress, Variant() and Double().",
+   "tests": {
+    "T_vb_args3": {
+     "1": "[Variant()]",
+     "2": "[Variant()]"
+    },
+    "T_vb_transpose": {
+     "12": "[Variant()]"
+    },
+    "T_vb_eval": {
+     "7": "[Variant()]"
+    },
+    "T_vb_eval4": {
+     "10": "[Variant()]"
+    },
+    "T_vb_more2": {
+     "6": "[Variant()]",
+     "7": "[Double()]",
+     "11": "[Variant()]"
     }
    }
   }
@@ -361,6 +381,29 @@
   "T_txt19": "the displayed text of B4!F19: -12345678901 in the number for",
   "T_txt20": "the displayed text of B4!F20: 0.00001234 may not fit its col",
   "T_txtnarrow": "the displayed text of B4!E1: 123456 may not fit its column a",
+  "T_vb_app_countblank": "COUNTBLANK of a value, not a range",
+  "T_vb_app_text": "Application.TEXT is not modelled",
+  "T_vb_app_transpose": "Transpose of a int",
+  "T_vb_late1": "WorksheetFunction.Roundup given a range of several cells for",
+  "T_vb_late2": "WorksheetFunction.Roundup given True, which early-bound VBA ",
+  "T_vb_late3": "WorksheetFunction.Substitute given True, which early-bound V",
+  "T_vb_late4": "WorksheetFunction.Countblank given an array where a formula ",
+  "T_vb_late5": "WorksheetFunction.Rank given an array where a formula must h",
+  "T_vb_late6": "WorksheetFunction.Large given True, which early-bound VBA ma",
+  "T_vb_late7": "WorksheetFunction.TextJoin given several texts, which Excel ",
+  "T_vb_late8": "WorksheetFunction.TextJoin given several texts, which Excel ",
+  "T_vb_one1": "WorksheetFunction.Roundup given True, which early-bound VBA ",
+  "T_vb_one2": "WorksheetFunction.Textjoin given a range of several cells fo",
+  "T_vb_one3": "WorksheetFunction.Textjoin given an array for one value",
+  "T_vb_one4": "WorksheetFunction.Roundup given a range of several cells for",
+  "T_vb_one5": "WorksheetFunction.RoundUp failing on text, which VBA may ref",
+  "T_vb_one6": "WorksheetFunction.Large given True, which early-bound VBA ma",
+  "T_vb_one7": "Application.Countblank given an array where a formula must h",
+  "T_vb_one8": "Application.Rank given an array where a formula must have a ",
+  "T_vb_one9": "WorksheetFunction.TextJoin given several texts, which Excel ",
+  "T_vb_wf_countblank": "COUNTBLANK of a value, not a range",
+  "T_vb_wf_text": "WorksheetFunction.TEXT is not modelled",
+  "T_vb_wf_transpose": "Transpose of a int",
   "T_w12": "writing '1/2' to a cell: Excel turns it into a date or a tim",
   "T_w23": "writing '12-13' to a cell: Excel turns it into a date or a t",
   "T_w24": "writing 'Jan 5' to a cell: Excel turns it into a date or a t",
@@ -377,7 +420,6 @@
   "T_w57": "writing '1/0' to a cell: Excel turns it into a date or a tim",
   "T_w58": "writing 'Feb 2024' to a cell: Excel turns it into a date or ",
   "T_wd_text": "reading DT!G20: a formula whose value could not be calculate",
-  "T_wsfn2": "WorksheetFunction.Count is not modelled",
   "T_x02": "writing 'Jan 2024' to a cell: Excel turns it into a date or ",
   "T_x13": "writing '1/2 ' to a cell: Excel turns it into a date or a ti",
   "T_x19": "writing 'March 5' to a cell: Excel turns it into a date or a",

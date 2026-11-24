@@ -1049,6 +1049,11 @@ def type_name(v):
         return "Error"
     if isinstance(v_, str):
         return "String"
-    if isinstance(v_, VBAArray):
-        return "Variant()"
+    if isinstance(v_, VBAArray):  # by its declared type: Dim d(1) As Double is Double()
+        return _ARRAY_TYPE_NAMES.get(v_.elem_type, "Variant") + "()"
     return type(v_).__name__
+
+
+_ARRAY_TYPE_NAMES = {"byte": "Byte", "integer": "Integer", "long": "Long", "longlong": "LongLong", "single": "Single",
+                     "double": "Double", "currency": "Currency", "date": "Date", "string": "String", "boolean": "Boolean",
+                     "variant": "Variant"}  # fmt: skip

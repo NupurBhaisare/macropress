@@ -2282,6 +2282,16 @@ def f_minifs(ev, args):
 # refuses as it is entered (error 1004) a formula that gives another number, or anything but a reference or a function
 # that may hand back cells where one is wanted (a constant, an operator, SUM(...)).
 _ARGUMENTS = {
+    **dict.fromkeys(("AND", "OR", "AVERAGE", "COUNT", "COUNTA", "MAX", "MIN", "SUM", "SUMPRODUCT"), (1, 255, 1, "")),
+    "CONCAT": (1, 254, 1, ""),
+    "IFERROR": (2, 2, 1, ""),
+    "ISNUMBER": (1, 1, 1, ""),
+    "ISTEXT": (1, 1, 1, ""),
+    "ROUND": (2, 2, 1, ""),
+    "TRIM": (1, 1, 1, ""),
+    "SORT": (1, 4, 1, ""),
+    "UNIQUE": (1, 3, 1, ""),
+    "TRANSPOSE": (1, 1, 1, ""),
     "COUNTIF": (2, 2, 1, "r"),
     "SUMIF": (2, 3, 1, "r-r"),
     "AVERAGEIF": (2, 3, 1, "r-r"),

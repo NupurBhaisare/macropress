@@ -94,6 +94,17 @@ Public Function NFJoin(ByVal ws As Object, ByVal col As Long, ByVal n As Long) A
     Next r
     NFJoin = s
 End Function
+
+Public Function ShowBlock(ByVal rng As Object) As String
+    Dim r As Long, c As Long, s As String
+    For r = 1 To rng.Rows.Count
+        For c = 1 To rng.Columns.Count
+            s = s & Show(rng.Cells(r, c).Value2) & "|"
+        Next c
+        s = s & ";"
+    Next r
+    ShowBlock = s
+End Function
 '''
 
 TESTS = []
@@ -2461,6 +2472,165 @@ SHEETS += [(f"AP{k}", [8] * 5, PR_ROWS) for k in (11, 12)] + [("AP13", [8], [[1]
 SHEETS += [("AP14", [8] * 4, [[5, (d("2024-01-05"), "date"), "text"]])] + [(f"AP{k}", [8] * 4, [[1, 2], [3, 4]]) for k in range(15, 24)]
 SHEETS += [("AP24", [8] * 6, []), ("AP25", [8] * 4, [[1, 2, 3], [4, 5, 6], [7, 8, 9]]), ("AP26", [8] * 3, [[1]])]
 SHEETS += [("AP27", [8] * 4, [[1, 2], [3, 4], [5, 6]])] + [(f"AP{k}", [8] * 4, [[1, 2], [3, 4]]) for k in range(28, 40)]
+
+# --------------------------------------------------------------------------------------------------- newer functions
+# 2.6: FILTER, SEQUENCE, SORTBY, the functions that shape arrays and split text, LET, LAMBDA and its helpers. Each test
+# writes its formulas to a sheet of its own, from the data on ND, and reads what they spill.
+def f2(cell, formula, prop="Formula2"):
+    return f'ws.Range("{cell}").{prop} = {q(formula)}'
+
+
+def blk(area):
+    return f'S: ShowBlock(ws.Range("{area}"))'
+
+
+def val(cell):
+    return f'V: ws.Range("{cell}").Value'
+
+
+def entered(cell, formula):
+    return f"E: {f2(cell, formula)}"
+
+
+ND_ROWS = [[3, "c", True, 10], [1, "a", False, 20], [4, "d", True, None], [1, "a", False, 40], [5, "e", True, "x"],
+           [9, "i", False, 60]]
+T("TNew", "nf_filter", ws_("NX1"), f2("A1", "=FILTER(ND!A1:A6,ND!A1:A6>2)"), blk("A1:A5"),
+  f2("C1", "=FILTER(ND!A1:B6,ND!C1:C6)"), blk("C1:D4"), f2("F1", "=FILTER(ND!A1:A6,ND!A1:A6>100)"), val("F1"),
+  f2("G1", '=FILTER(ND!A1:A6,ND!A1:A6>100,"none")'), val("G1"), f2("H1", "=FILTER(ND!A1:A6,ND!A1:A6>100,{1,2})"), blk("H1:I1"),
+  f2("K1", "=FILTER(ND!A1:D1,{1,0,1,0})"), blk("K1:M1"), f2("A10", "=FILTER(ND!A1:A6,ND!A1:A3>2)"), val("A10"),
+  f2("B10", "=FILTER(ND!A1:A6,{1;0;1;0;1;0})"), blk("B10:B13"))
+T("TNew", "nf_filter2", ws_("NX2"), f2("A1", "=FILTER(ND!A1:A6,ND!B1:B6)"), val("A1"), f2("B1", "=FILTER(ND!A1:A6,ND!D1:D6)"), val("B1"),
+  f2("C1", "=FILTER(ND!A1:A6,{2;0;-1;0;0.5;0})"), blk("C1:C4"), f2("D1", "=FILTER(ND!A1:B6,ND!A1:A6=1)"), blk("D1:E3"),
+  f2("G1", "=FILTER(ND!D1:D6,ND!A1:A6>0)"), blk("G1:G6"), f2("H1", "=FILTER(ND!A1:A6,(ND!A1:A6>1)*(ND!A1:A6<9))"), blk("H1:H4"),
+  f2("I1", "=FILTER(ND!A1:A3,{TRUE;#N/A;FALSE})"), val("I1"), f2("J1", "=FILTER(ND!A1:A6,ND!A1:B6>2)"), val("J1"),
+  f2("K1", "=FILTER(5,TRUE)"), val("K1"), f2("L1", "=FILTER(ND!A1:A6,ND!A1:A6>2)", "Formula"), val("L1"), 'S: ws.Range("L1").Formula2')
+T("TNew", "nf_sequence", ws_("NX3"), f2("A1", "=SEQUENCE(3)"), blk("A1:A4"), f2("C1", "=SEQUENCE(2,3)"), blk("C1:E2"),
+  f2("G1", "=SEQUENCE(3,1,10,-2.5)"), blk("G1:G3"), f2("I1", "=SEQUENCE(2.9)"), blk("I1:I3"), f2("K1", "=SEQUENCE(0)"), val("K1"),
+  f2("L1", "=SEQUENCE(-1)"), val("L1"), f2("M1", "=SEQUENCE(1,0)"), val("M1"), f2("N1", "=SEQUENCE(3,,5)"), blk("N1:N3"),
+  f2("P1", "=SEQUENCE(1,3,,)"), blk("P1:R1"), f2("S1", '=SEQUENCE("2")'), blk("S1:S2"), f2("U1", "=SEQUENCE(11,1,0,0.1)"),
+  'N: (ws.Range("U7").Value2 - 0.6) * 1E+16', 'N: (ws.Range("U9").Value2 - 0.8) * 1E+16', f2("W1", "=SEQUENCE(ND!A1:A2)"), blk("W1:W3"))
+T("TNew", "nf_sortby", ws_("NX4"), f2("A1", "=SORTBY(ND!B1:B6,ND!A1:A6)"), blk("A1:A6"), f2("B1", "=SORTBY(ND!B1:B6,ND!A1:A6,-1)"), blk("B1:B6"),
+  f2("C1", "=SORTBY(ND!A1:B6,ND!B1:B6,1,ND!A1:A6,-1)"), blk("C1:D6"), f2("F1", "=SORTBY(ND!B1:B6,ND!C1:C6)"), blk("F1:F6"),
+  f2("G1", "=SORTBY(ND!A1:A6,ND!D1:D6)"), blk("G1:G6"), f2("H1", "=SORTBY(ND!A1:A6,ND!A1:A5)"), val("H1"),
+  f2("I1", "=SORTBY(ND!A1:A6,ND!A1:A6,0)"), val("I1"), f2("J1", "=SORTBY(ND!A1:D1,ND!A1:D1)"), blk("J1:M1"),
+  f2("N1", "=SORTBY(ND!A1:A6,ND!A1:A6,-1,ND!B1:B6)"), blk("N1:N6"))
+T("TNew", "nf_sort_more", ws_("NX5"), f2("A1", "=SORT(ND!A1:D2,1,1,TRUE)"), blk("A1:D2"), f2("A4", "=SORT(ND!A1:D2,2,-1,TRUE)"), blk("A4:D5"),
+  f2("F1", "=UNIQUE(ND!A1:A6,,TRUE)"), blk("F1:F5"), f2("G1", "=UNIQUE(ND!A1:B6,,TRUE)"), blk("G1:H5"),
+  f2("J1", "=UNIQUE({1,2,1;3,4,3},TRUE)"), blk("J1:L2"), f2("N1", "=UNIQUE(ND!A1:A6,FALSE,TRUE)"), blk("N1:N5"),
+  f2("O1", "=UNIQUE({1;1},,TRUE)"), val("O1"))
+T("TNew", "nf_take", ws_("NX6"), f2("A1", "=TAKE(ND!A1:B6,2)"), blk("A1:B3"), f2("D1", "=TAKE(ND!A1:B6,-2)"), blk("D1:E2"),
+  f2("G1", "=TAKE(ND!A1:B6,,1)"), blk("G1:H6"), f2("J1", "=TAKE(ND!A1:B6,2,-1)"), blk("J1:J2"), f2("L1", "=TAKE(ND!A1:B6,10)"), blk("L1:M7"),
+  f2("O1", "=TAKE(ND!A1:B6,0)"), val("O1"), f2("P1", "=TAKE(5,1)"), val("P1"), f2("Q1", "=TAKE(ND!A1:B6,1.9)"), blk("Q1:R2"),
+  f2("T1", "=TAKE(ND!A1:B6,-10,-10)"), blk("T1:U6"))
+T("TNew", "nf_drop", ws_("NX7"), f2("A1", "=DROP(ND!A1:B6,4)"), blk("A1:B3"), f2("D1", "=DROP(ND!A1:B6,-4)"), blk("D1:E3"),
+  f2("G1", "=DROP(ND!A1:B6,,1)"), blk("G1:G6"), f2("I1", "=DROP(ND!A1:B6,6)"), val("I1"), f2("J1", "=DROP(ND!A1:B6,10)"), val("J1"),
+  f2("K1", "=DROP(ND!A1:B6,0,0)"), blk("K1:L6"), f2("N1", "=DROP(ND!A1:B6,-5,1)"), blk("N1:N2"))
+T("TNew", "nf_choose", ws_("NX8"), f2("A1", "=CHOOSECOLS(ND!A1:D2,1,3)"), blk("A1:B2"), f2("D1", "=CHOOSECOLS(ND!A1:D2,-1)"), blk("D1:D2"),
+  f2("F1", "=CHOOSECOLS(ND!A1:D2,{2,1})"), blk("F1:G2"), f2("I1", "=CHOOSECOLS(ND!A1:D2,0)"), val("I1"),
+  f2("J1", "=CHOOSECOLS(ND!A1:D2,5)"), val("J1"), f2("K1", "=CHOOSEROWS(ND!A1:B6,2,2,1)"), blk("K1:L3"),
+  f2("N1", "=CHOOSEROWS(ND!A1:B6,-1)"), blk("N1:O1"), f2("Q1", "=CHOOSEROWS(ND!A1:B6,7)"), val("Q1"),
+  f2("R1", "=CHOOSECOLS(ND!A1:D2,1.9)"), blk("R1:R2"), f2("S1", "=CHOOSEROWS(ND!A1:B6,{1;3})"), blk("S1:T2"))
+T("TNew", "nf_stack", ws_("NX9"), f2("A1", "=VSTACK(ND!A1:B2,ND!A5:A6)"), blk("A1:B4"), f2("D1", "=HSTACK(ND!A1:A2,ND!B1:B3)"), blk("D1:E3"),
+  f2("G1", '=VSTACK(1,"a",TRUE)'), blk("G1:G3"), f2("H1", "=HSTACK(ND!A1:A2,5)"), blk("H1:I2"), f2("K1", "=VSTACK(ND!D3:D4,ND!A1)"), blk("K1:K3"),
+  f2("M1", "=VSTACK(ND!A1:A2,{1,2,3})"), blk("M1:O3"), f2("Q1", "=HSTACK(1)"), val("Q1"))
+T("TNew", "nf_tocol", ws_("NX10"), f2("A1", "=TOCOL(ND!A1:B3)"), blk("A1:A6"), f2("B1", "=TOCOL(ND!A1:B3,,TRUE)"), blk("B1:B6"),
+  f2("C1", "=TOCOL(ND!D1:D6,1)"), blk("C1:C6"), f2("D1", "=TOCOL({1,#N/A;2,3},2)"), blk("D1:D4"), f2("E1", '=TOCOL({1,#N/A;"",3},3)'), blk("E1:E4"),
+  f2("F1", "=TOROW(ND!A1:B2)"), blk("F1:I1"), f2("F3", "=TOROW(ND!A1:B2,,TRUE)"), blk("F3:I3"), f2("K1", "=TOCOL(ND!D1:D6)"), blk("K1:K6"),
+  f2("L1", "=TOCOL(ND!A1:B2,4)"), val("L1"), f2("M1", "=TOCOL(ND!D3:D3,1)"), val("M1"))
+T("TNew", "nf_expand", ws_("NX11"), f2("A1", "=EXPAND(ND!A1:A2,3,2)"), blk("A1:B3"), f2("D1", "=EXPAND(ND!A1:A2,3,2,0)"), blk("D1:E3"),
+  f2("G1", "=EXPAND(ND!A1:B2,1)"), val("G1"), f2("H1", "=EXPAND(ND!A1:A2,,2)"), blk("H1:I2"), f2("K1", "=WRAPROWS(ND!A1:A6,4)"), blk("K1:N2"),
+  f2("K4", '=WRAPROWS(ND!A1:A6,4,"-")'), blk("K4:N5"), f2("P1", "=WRAPCOLS(ND!A1:A6,4)"), blk("P1:Q4"), f2("S1", "=WRAPROWS(ND!A1:B6,2)"), val("S1"),
+  f2("T1", "=WRAPROWS(ND!A1:A6,0)"), val("T1"), f2("U1", "=WRAPCOLS({1,2,3},2)"), blk("U1:V2"))
+T("TNew", "nf_textsplit", ws_("NX12"), f2("A1", '=TEXTSPLIT("a,b,,c",",")'), blk("A1:D1"), f2("A2", '=TEXTSPLIT("a,b,,c",",",,TRUE)'), blk("A2:C2"),
+  f2("A4", '=TEXTSPLIT("a,b;c,d",",",";")'), blk("A4:B5"), f2("A7", '=TEXTSPLIT("a,b;c",",",";")'), blk("A7:B8"),
+  f2("A10", '=TEXTSPLIT("a,b;c",",",";",,,"-")'), blk("A10:B11"), f2("A13", '=TEXTSPLIT("aXbxc","x")'), blk("A13:B13"),
+  f2("A14", '=TEXTSPLIT("aXbxc","x",,,1)'), blk("A14:C14"), f2("A15", '=TEXTSPLIT("a-b_c",{"-","_"})'), blk("A15:C15"),
+  f2("A16", '=TEXTSPLIT("abc","")'), val("A16"), f2("A17", '=TEXTSPLIT("",",")'), val("A17"), f2("A18", '=TEXTSPLIT(123.5,".")'), blk("A18:B18"),
+  f2("A19", '=TEXTSPLIT("a,b",,",")'), blk("A19:A20"), f2("A22", '=TEXTSPLIT(",a,",",")'), blk("A22:C22"))
+T("TNew", "nf_textbefore", ws_("NX13"), f2("A1", '=TEXTBEFORE("a-b-c","-")'), val("A1"), f2("A2", '=TEXTBEFORE("a-b-c","-",2)'), val("A2"),
+  f2("A3", '=TEXTBEFORE("a-b-c","-",-1)'), val("A3"), f2("A4", '=TEXTBEFORE("a-b-c","x")'), val("A4"),
+  f2("A5", '=TEXTBEFORE("a-b-c","x",,,,"none")'), val("A5"), f2("A6", '=TEXTBEFORE("a-b-c","-",3)'), val("A6"),
+  f2("A7", '=TEXTBEFORE("a-b-c","-",0)'), val("A7"), f2("A8", '=TEXTBEFORE("aXb","x",,1)'), val("A8"), f2("A9", '=TEXTBEFORE("a-b","x",,,1)'), val("A9"),
+  f2("A10", '=TEXTBEFORE("abc","")'), val("A10"), f2("A11", '=TEXTBEFORE("abc","",-1)'), val("A11"),
+  f2("A12", '=TEXTBEFORE("a-b-c",{"-","b"},2)'), val("A12"), f2("A13", '=TEXTBEFORE(ND!B1:B2,"x",,,,"n")'), blk("A13:A14"),
+  f2("A15", '=TEXTBEFORE("a-b-c","-",-3)'), val("A15"), f2("A16", '=TEXTBEFORE("a-b-c","-",-4)'), val("A16"))
+T("TNew", "nf_textafter", ws_("NX14"), f2("A1", '=TEXTAFTER("a-b-c","-")'), val("A1"), f2("A2", '=TEXTAFTER("a-b-c","-",2)'), val("A2"),
+  f2("A3", '=TEXTAFTER("a-b-c","-",-1)'), val("A3"), f2("A4", '=TEXTAFTER("a-b-c","x")'), val("A4"), f2("A5", '=TEXTAFTER("a-b","x",,,1)'), val("A5"),
+  f2("A6", '=TEXTAFTER("a-b","x",-1,,1)'), val("A6"), f2("A7", '=TEXTAFTER("abc","")'), val("A7"), f2("A8", '=TEXTAFTER("abc","",-1)'), val("A8"),
+  f2("A9", '=TEXTAFTER("aXbXc","x",,1)'), val("A9"), f2("A10", '=TEXTAFTER("a-b-c","-",3)'), val("A10"), f2("A11", '=TEXTAFTER(5.25,".")'), val("A11"),
+  f2("A12", '=TEXTAFTER("a--b","-",2)'), val("A12"), f2("A13", '=TEXTBEFORE("a-b","-",,,1)'), val("A13"))
+T("TNew", "nf_let", ws_("NX15"), f2("A1", "=LET(x,2,x*3)"), val("A1"), f2("A2", "=LET(x,2,y,x+1,x*y)"), val("A2"),
+  f2("A3", "=LET(r,ND!A1:A6,SUM(r))"), val("A3"), f2("A4", "=LET(r,ND!A1:A6,ROWS(r))"), val("A4"), f2("B1", "=LET(x,ND!A1:A3,x*2)"), blk("B1:B3"),
+  f2("A5", "=LET(x,1,LET(x,2,x)+x)"), val("A5"), f2("A6", "=LET(x,2,x*3)"), 'S: ws.Range("A6").Formula', 'S: ws.Range("A6").Formula2',
+  f2("A7", "=LET(c,ND!A1,c)"), val("A7"), f2("A8", "=LET(r,ND!A1:A6,INDEX(r,2))"), val("A8"),
+  f2("A9", "=LET(total,SUM(ND!A1:A6),n,COUNT(ND!A1:A6),total/n)"), val("A9"), entered("C1", "=LET(x,1)"), entered("C2", "=LET(A1,1,A1)"),
+  entered("C3", "=LET(x,1,x,2,x)"))
+T("TNew", "nf_lambda", ws_("NX16"), f2("A1", "=LAMBDA(x,x*2)(5)"), val("A1"), f2("A2", "=LAMBDA(x,y,x+y)(1,2)"), val("A2"),
+  f2("A3", "=LET(f,LAMBDA(x,x+1),f(1))"), val("A3"), f2("A4", "=LAMBDA(x,x*2)"), val("A4"), f2("A5", "=LAMBDA(x,x*2)(1,2)"), val("A5"),
+  f2("A6", "=LAMBDA(x,y,x)(1)"), val("A6"), f2("A7", "=LAMBDA(x,[y],IF(ISOMITTED(y),x,x+y))(1)"), val("A7"),
+  f2("A8", "=LAMBDA(x,[y],IF(ISOMITTED(y),x,x+y))(1,2)"), val("A8"), f2("B1", "=LAMBDA(x,x*2)(ND!A1:A3)"), blk("B1:B3"),
+  f2("A9", "=LET(x,5,LAMBDA(y,x+y))(1)"), val("A9"), f2("A10", "=LAMBDA(x,x)()"), val("A10"), f2("A11", "=(LAMBDA(x,x*3))(2)"), val("A11"),
+  f2("A12", "=LAMBDA(x,y,x)(1,)"), val("A12"), f2("A13", "=LAMBDA(x,x)(ND!A1)"), val("A13"), 'S: ws.Range("A1").Formula')
+T("TNew", "nf_helpers", ws_("NX17"), f2("A1", "=MAP(ND!A1:A3,LAMBDA(x,x*10))"), blk("A1:A3"), f2("B1", "=MAP(ND!A1:A3,ND!B1:B3,LAMBDA(a,b,a&b))"),
+  blk("B1:B3"), f2("C1", "=REDUCE(0,ND!A1:A6,LAMBDA(a,v,a+v))"), val("C1"), f2("D1", "=SCAN(0,ND!A1:A4,LAMBDA(a,v,a+v))"), blk("D1:D4"),
+  f2("E1", "=BYROW(ND!A1:B3,LAMBDA(r,COUNTA(r)))"), blk("E1:E3"), f2("F1", "=BYCOL(ND!A1:B3,LAMBDA(c,ROWS(c)))"), blk("F1:G1"),
+  f2("F3", "=MAKEARRAY(2,3,LAMBDA(r,c,r*10+c))"), blk("F3:H4"), f2("J1", "=BYROW(ND!A1:B3,LAMBDA(r,r))"), val("J1"),
+  f2("K1", "=MAP(ND!A1:A3,LAMBDA(x,{1,2}))"), val("K1"), f2("L1", "=REDUCE(,ND!A1:A3,LAMBDA(a,v,a+v))"), val("L1"),
+  f2("M1", "=REDUCE(0,{1,2},LAMBDA(a,v,VSTACK(a,v)))"), blk("M1:M3"), f2("N1", "=MAP(ND!A1:A3,LAMBDA(x,y,x))"), val("N1"),
+  f2("O1", '=SCAN("",ND!B1:B3,LAMBDA(a,v,a&v))'), blk("O1:O3"), f2("P1", "=MAP(ND!A1:A2,ND!A1:A3,LAMBDA(a,b,a+b))"), blk("P1:P3"),
+  f2("Q1", "=MAKEARRAY(0,1,LAMBDA(r,c,1))"), val("Q1"))
+T("TNew", "nf_names", ws_("NX18"), f2("A1", "=Twice(21)"), val("A1"), f2("A2", "=Fact(5)"), val("A2"), f2("A3", "=CountDown(100)"), val("A3"),
+  f2("A4", "=Twice"), val("A4"), f2("B1", "=Twice(ND!A1:A3)"), blk("B1:B3"), f2("A5", "=LET(Twice,5,Twice+1)"), val("A5"),
+  'S: ThisWorkbook.Names("Twice").RefersTo', f2("A6", "=MAP(ND!A1:A3,Twice)"), blk("A6:A8"), f2("A9", "=Twice(1,2)"), val("A9"))
+for k, depth in enumerate((1000, 2000, 5000, 10000), 1):
+    T("TNew", f"nf_deep{k}", ws_("NX18"), f2(f"C{k}", f"=CountDown({depth})"), val(f"C{k}"))
+T("TNew", "nf_codes", ws_("NX19"), f2("A1", "=FILTER(ND!A1:A2,ND!A1:A2>100)"), val("A1"), 'S: CStr(ws.Range("A1").Value)', 'S: ws.Range("A1").Text',
+  'V: IsError(ws.Range("A1").Value)', f2("C1", "=SEQUENCE(3)"), 'ws.Range("C2").Value = 1', val("C1"), 'S: CStr(ws.Range("C1").Value)',
+  'S: ws.Range("C1").Text', "V: CVErr(2050)", "V: CVErr(2045)", f2("E1", "=ERROR.TYPE(A1)"), val("E1"), f2("E2", "=ERROR.TYPE(C1)"), val("E2"))
+T("TNew", "nf_display", ws_("NX20"), f2("A1", "=FILTER(ND!A1:A6,ND!A1:A6>2)"), 'S: ws.Range("A1").Formula', f2("B1", "=TAKE(ND!A1:A6,2)"),
+  'S: ws.Range("B1").Formula', f2("C1", "=MAP(ND!A1:A3,LAMBDA(x,x*10))"), 'S: ws.Range("C1").Formula', f2("D1", '=TEXTBEFORE("a-b","-")'),
+  'S: ws.Range("D1").Formula', f2("E1", "=SEQUENCE(2)"), 'S: ws.Range("E1").Formula', f2("F1", "=LET(x,ND!A1:A3,x)"), 'S: ws.Range("F1").Formula',
+  f2("G1", "=TAKE(ND!A1:A6,2)", "Formula"), 'S: ws.Range("G1").Formula2', val("G1"), f2("H1", "=SEQUENCE(2)", "Formula"),
+  'S: ws.Range("H1").Formula2', val("H1"), f2("I1", '=TEXTSPLIT("a,b",",")', "Formula"), 'S: ws.Range("I1").Formula2', val("I1"))
+T("TNew", "nf_entry", ws_("NX21"), *(entered(f"A{k}", formula) for k, formula in enumerate(
+    ["=TAKE(ND!A1:A6)", "=SEQUENCE()", "=FILTER(ND!A1:A6)", '=TEXTSPLIT("a")', "=MAKEARRAY(1,1)", "=MAP(ND!A1:A3)", "=VSTACK()",
+     "=CHOOSECOLS(ND!A1:A3)", "=LAMBDA()", "=EXPAND(ND!A1)", "=SORTBY(ND!A1:A3)", "=TOCOL()", '=TEXTBEFORE("a")', "=REDUCE(0,ND!A1:A3)",
+     "=BYROW(ND!A1:A3)"], 1)))
+# one each: what the first answers left open
+NF_MORE = [[f2("A1", "=MAP(ND!A1:A2,ND!A1:A3,LAMBDA(a,b,IFERROR(a,100)+b))"), blk("A1:A3")],
+           [f2("C1", "=LAMBDA(x,[y],ISOMITTED(y))(1,)"), val("C1")], [f2("D1", "=LAMBDA(x,[y],y)(1)"), val("D1")],
+           [f2("E1", "=BYROW(ND!A1:A3)"), val("E1")], [f2("F1", "=LET(A1,1,A1)"), val("F1")],
+           [entered("G1", "=SORTBY(ND!A1:A6,ND!A1:A6,-1,ND!B1:B6)"), entered("G2", "=SORTBY(ND!A1:A6,ND!A1:A6,-1,ND!B1:B6,1)")],
+           [entered("H1", "=LAMBDA(x,x,x)(1)")], [f2("I1", "=MAP(ND!A1:A3,5)"), val("I1")],
+           [f2("J1", '=TEXTSPLIT(ND!B1:B2,",")'), blk("J1:K2")], [f2("M1", '=TEXTBEFORE("a-b","-",4)'), val("M1")],
+           [f2("N1", '=TEXTSPLIT("a;;b",",",";",TRUE)'), blk("N1:N3")], [f2("P1", "=SORTBY(ND!A1:A6,ND!D1:D6,-1)"), blk("P1:P6")],
+           [f2("Q1", "=FILTER(ND!A1:A3,ND!D1:D3)"), blk("Q1:Q3")], [f2("R1", '=TEXTSPLIT("a-b_c",{"-","-b"})'), blk("R1:T1")],
+           [f2("U1", "=SCAN(0,ND!A1:A2,LAMBDA(a,v,{1,2}))"), val("U1")], [f2("V1", "=REDUCE(0,ND!A1:A3,LAMBDA(a,v,{1,2}))"), blk("V1:W1")]]
+for k, lines in enumerate(NF_MORE, 1):
+    T("TNew", f"nf_more{k}", ws_("NX22"), *lines)
+NF_LAST = [[f2("A10", "=LET(x,1/0,5)"), val("A10")], [f2("B10", '=TEXTSPLIT("a-b_c",{"-b","-"})'), blk("B10:D10")],
+           [f2("E10", "=MAP(ND!A1:A3,ND!A1,LAMBDA(a,b,a+b))"), blk("E10:E12")], [f2("F10", "=MAP(ND!A1:A3,LAMBDA(c,ROW(c)))"), blk("F10:F12")],
+           [f2("G10", "=BYROW(ND!A1:B3,LAMBDA(r,ROW(r)))"), blk("G10:G12")], [f2("H10", "=REDUCE(0,ND!A1:A3,LAMBDA(a,v,a+ROW(v)))"), val("H10")],
+           [f2("I10", "=LET(x,ND!A1:A3,ROW(x))"), blk("I10:I12")], [f2("J10", "=LAMBDA(r,ROW(r))(ND!A2)"), val("J10")],
+           [f2("K10", "=SORTBY(ND!A1:A3,ND!A1:A3,1,{1,2,3},1)"), val("K10")], [f2("L10", "=FILTER(ND!A1:A6,TRUE)"), blk("L10:L12")]]
+for k, lines in enumerate(NF_LAST, 1):
+    T("TNew", f"nf_last{k}", ws_("NX22"), *lines)
+# how the file keeps them: read from a copy Excel saves (not in the suite's answers but the formulas' text)
+PREFIXED = ["=FILTER(ND!A1:A6,ND!A1:A6>2)", "=SEQUENCE(2)", "=SORTBY(ND!A1:A6,ND!A1:A6)", "=TAKE(ND!A1:A6,2)", "=DROP(ND!A1:A6,2)",
+            "=CHOOSECOLS(ND!A1:B2,1)", "=CHOOSEROWS(ND!A1:B2,1)", "=VSTACK(1,2)", "=HSTACK(1,2)", "=TOCOL(ND!A1:B2)", "=TOROW(ND!A1:B2)",
+            "=EXPAND(1,2)", "=WRAPROWS(ND!A1:A6,2)", "=WRAPCOLS(ND!A1:A6,2)", '=TEXTSPLIT("a,b",",")', '=TEXTBEFORE("a-b","-")',
+            '=TEXTAFTER("a-b","-")', "=LET(x,1,x+1)", "=LAMBDA(x,x*2)(3)", "=LET(f,LAMBDA(x,[y],IF(ISOMITTED(y),x,y)),f(1))",
+            "=MAP(ND!A1:A3,LAMBDA(v,v*2))", "=REDUCE(0,ND!A1:A3,LAMBDA(a,v,a+v))", "=SCAN(0,ND!A1:A3,LAMBDA(a,v,a+v))",
+            "=BYROW(ND!A1:B3,LAMBDA(r,SUM(r)))", "=BYCOL(ND!A1:B3,LAMBDA(c,SUM(c)))", "=MAKEARRAY(2,2,LAMBDA(r,c,r+c))", "=SORT(ND!A1:A6)",
+            "=UNIQUE(ND!A1:A6)"]
+T("TNew", "nf_prefix", ws_("NXP"), *(f2(f"A{10 * k + 1}", formula) for k, formula in enumerate(PREFIXED)),
+  *(f'S: ws.Range("A{10 * k + 1}").Formula2' for k in (17, 18, 19, 20, 22, 25, 14, 0)))
+# LAMBDAs kept as defined names, as Excel keeps them, with the hidden names it adds for their parameters
+NAMES = [("_xlpm.n", "#NAME?", True), ("_xlpm.x", "#NAME?", True),
+         ("CountDown", "_xlfn.LAMBDA(_xlpm.n,IF(_xlpm.n<=0,0,1+CountDown(_xlpm.n-1)))", False),
+         ("Fact", "_xlfn.LAMBDA(_xlpm.n,IF(_xlpm.n<=1,1,_xlpm.n*Fact(_xlpm.n-1)))", False),
+         ("Twice", "_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)", False)]
+SHEETS += [("ND", [8] * 4, ND_ROWS)] + [(f"NX{k}", [8] * 22, []) for k in range(1, 23)] + [("NXP", [8] * 4, [])]
 SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
 def sheets(index):

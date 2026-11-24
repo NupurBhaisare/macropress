@@ -82,10 +82,20 @@ The first public release.
   cells and rows given a height count in `UsedRange`, and a number's `Text` is not guessed once its font or column
   changed. Reading how a sheet looks still stops the run. The constants these statements use (`xlThin`, `xlCenter`,
   `xlThemeColorAccent1`, ...) are known.
+- The newer functions ([roadmap](docs/roadmap.md), 2.6), recorded from Excel first (42 more tests in the parity
+  suite): `FILTER`, `SEQUENCE`, `SORTBY`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`, `VSTACK`, `HSTACK`, `TOCOL`,
+  `TOROW`, `EXPAND`, `WRAPROWS`, `WRAPCOLS`, `TEXTSPLIT`, `TEXTBEFORE` and `TEXTAFTER`; `SORT` by column and `UNIQUE`
+  by column and of values that stand once only; and `LET`, `LAMBDA` (called in the formula, by the name `LET` gives
+  it, or kept as a defined name), `ISOMITTED`, `MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL` and `MAKEARRAY`. Saved, they
+  keep the prefixes a file Excel saved has, and Excel opening MacroPress's copy works them out to the same values.
 
 ### Fixed
 
 Found by running those macros in both Excel and MacroPress and comparing every answer.
+
+- **Errors of dynamic arrays**: `#SPILL!` and `#CALC!` read from VBA as error 2015 (`CStr` gave "Error 2015"); they
+  are 2045 and 2050, as in Excel, and `CVErr` gives them. A function worked out for each value of an array that
+  hands back an array each time (`=SEQUENCE(A1:A2)`) stopped the run; each shows its first value, as in Excel.
 
 - **`AutoFit`** did nothing. Excel shows hidden rows and columns again (not rows a filter hides), refuses a range that
   is neither rows nor columns (`Range("A1").AutoFit`, error 1004) and is refused on a protected sheet; so does

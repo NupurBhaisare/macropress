@@ -159,8 +159,8 @@ def setting(member):
 
 
 def size(rng, member, value, top):
-    """A width or height given to whole columns or rows: 0 (which hides them) or from 1 to `top`. Excel hides a row
-    given less than 1 point and shows a column given 0.05 of a character, which is not passed over."""
+    """A width or height given to whole columns or rows: 0 (which hides them) or from 1 to `top`. One between stops the
+    run: Excel hides a row given 0.8 points but not 1, and a column given 0.01 of a character but not 0.05."""
     v = passing(rng.app, f"Range.{member}", value, _either(_one_of(0), _between(1, top)))
     rng._single_sheet_target(member)
     return v

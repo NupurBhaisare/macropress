@@ -578,7 +578,9 @@ def more_styles(formats):
 
 def build_workbook(name, spec=None, folder=None):
     """The .xlsm for example `name`: its sheets and buttons from `spec`, its VBA from the .bas files in its folder.
-    A spec may bring more number formats than the examples use, as "styles": see more_styles."""
+    A spec may bring more number formats than the examples use, as "styles": see more_styles; and defined names, as
+    "names": (name, what it refers to as the file keeps it, whether it is one of the hidden names Excel adds for the
+    parameters of a LAMBDA)."""
     spec = spec or EXAMPLES[name]
     folder = folder or HERE / name
     sheets = spec["sheets"]
@@ -624,10 +626,16 @@ def build_workbook(name, spec=None, folder=None):
     sheet_list = "".join(
         f'<sheet name="{escape(s[0])}" sheetId="{i}"{_state(s)} r:id="rId{i}"/>' for i, s in enumerate(sheets, 1)
     )
+    hidden_name = ' hidden="1" xlm="1"'
+    names = "".join(
+        f'<definedName name="{escape(n)}"{hidden_name if hidden else ""}>{escape(text)}</definedName>'
+        for n, text, hidden in spec.get("names", ())
+    )
     parts["xl/workbook.xml"] = (
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="{MAIN}" xmlns:r="{REL}">'
         '<workbookPr codeName="ThisWorkbook"/><bookViews><workbookView/></bookViews>'
-        f'<sheets>{sheet_list}</sheets><calcPr calcId="191029"/></workbook>'
+        f"<sheets>{sheet_list}</sheets>{f'<definedNames>{names}</definedNames>' if names else ''}"
+        '<calcPr calcId="191029"/></workbook>'
     )
     parts["xl/_rels/workbook.xml.rels"] = _rels(workbook_rels)
     parts["xl/styles.xml"] = styles_xml

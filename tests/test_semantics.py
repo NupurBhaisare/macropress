@@ -943,6 +943,33 @@ class ExcelModel(Runner):
         text = 'Range("A1").Value = "a long piece of text"\nRange("A1").Font.Size = 30\nDebug.Print Range("A1").Text'
         self.assertEqual(self.prints(text, skip_appearance=True), ["a long piece of text"])
 
+    def test_newer_functions_answer_as_excel_does(self):
+        cells = "".join(f'Range("A{i}").Value = {v}\n' for i, v in enumerate((3, 1, 4, 1, 5, 9), 1))
+        body = cells + (
+            'Range("C1").Formula2 = "=FILTER(A1:A6,A1:A6>2)"\nRange("D1").Formula2 = "=FILTER(A1:A6,A1:A6>100,""none"")"\n'
+            'Range("E1").Formula2 = "=SEQUENCE(11,1,0,0.1)"\nRange("F1").Formula2 = "=TAKE(SORTBY(A1:A6,A1:A6,-1),2)"\n'
+            'Range("G1").Formula2 = "=TEXTSPLIT(""a,b;c"","","","";"")"\n'
+            'Range("I1").Formula2 = "=TEXTBEFORE(""a-b-c"",""-"",-1)"\n'
+            'Debug.Print Range("C1").Value, Range("C4").Value, Range("D1").Value, Range("E9").Value = 0.8, Range("F2").Value\n'
+            'Debug.Print Range("G1").Value, Range("H2").Text, Range("I1").Value\n'
+            'Range("J1").Formula2 = "=LET(r,A1:A6,x,SUM(r),x/ROWS(r))"\nRange("K1").Formula2 = "=MAP(A1:A3,LAMBDA(c,ROW(c)*10))"\n'
+            'Range("L1").Formula2 = "=LAMBDA(x,[y],IF(ISOMITTED(y),x,x+y))(1)"\n'
+            'Range("M1").Formula2 = "=BYROW(A1:B3,LAMBDA(r,COUNT(r)))"\nRange("N1").Formula2 = "=REDUCE(0,A1:A6,LAMBDA(a,v,a+v))"\n'
+            'Range("O1").Formula2 = "=LAMBDA(x,x)"\nRange("P1").Formula = "=LET(r,A1:A6,SUM(r))"\n'
+            'Debug.Print Range("J1").Value, Range("K3").Value, Range("L1").Value, Range("M2").Value, Range("N1").Value, '
+            'CStr(Range("O1").Value), Range("P1").Value, Range("L1").Formula2'
+        )
+        # SEQUENCE adds its step (the ninth of 0, 0.1, ... is not 0.8), TEXTSPLIT pads with #N/A, a LAMBDA hands on
+        # the cells it is given (ROW of them), a parameter in [ ] may be left out, a LAMBDA left in a cell is #CALC!,
+        # and r named by LET is no R1C1 reference
+        expected = ["3 9 none False 5", "a #N/A a-b", "3.83333333333333 30 1 1 23 Error 2050 23 "
+                    "=LAMBDA(x,[y],IF(ISOMITTED(y),x,x+y))(1)"]  # fmt: skip
+        self.assertEqual(self.prints(body), expected)
+        for formula in ("=LET(x,1,x,2,x)", "=LAMBDA(x,x,x)(1)", "=SORTBY(A1:A6,A1:A6,-1,B1:B6)"):  # Excel refuses these
+            with self.assertRaises(VBARuntimeError) as ctx:
+                self.prints(f'Range("Z1").Formula2 = "{formula}"')
+            self.assertEqual(ctx.exception.number, 1004)
+
 
 class MovingFormulas(Runner):
     """A formula filled, pasted or sorted into another cell: its relative references move with it, wherever they

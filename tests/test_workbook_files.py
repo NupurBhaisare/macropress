@@ -516,6 +516,30 @@ def test_a_press_told_to_passes_over_how_a_sheet_looks_and_counts_what_it_passed
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["appearance_skipped"]["Font"] == 1
 
 
+def test_newer_functions_are_saved_as_excel_saves_them(tmp_path):
+    vba = (
+        'Range("C1").Formula2 = "=LET(f,LAMBDA(x,[y],IF(ISOMITTED(y),x,y)),f(1))"\n'
+        'Range("D1").Formula2 = "=MAP(A1:A2,LAMBDA(v,v*2))"\nRange("E1").Formula2 = "=TAKE(A1:B2,1)"'
+    )
+    out = tmp_path / "out.xlsx"
+    sheet = _press(_workbook(tmp_path / "in.xlsx"), out, vba)
+    with zipfile.ZipFile(out) as z:
+        xml = z.read("xl/worksheets/sheet1.xml").decode()
+    # as a file Excel saved keeps them: _xlfn. before the functions, _xlpm. before the names LET and LAMBDA bind,
+    # and _xlop. where LAMBDA binds an optional one
+    assert (
+        "_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.x,_xlop.y,IF(_xlfn.ISOMITTED(_xlpm.y),_xlpm.x,_xlpm.y)),_xlpm.f(1))"
+        in xml
+    )
+    assert "_xlfn.MAP(A1:A2,_xlfn.LAMBDA(_xlpm.v,_xlpm.v*2))" in xml and "_xlfn.TAKE(A1:B2,1)" in xml
+    assert [_value(sheet, 1, c) for c in (3, 4, 5, 6)] == [1, 2, 1, 2]
+    assert _value(sheet, 2, 4) == "#VALUE!"  # "keep" * 2
+    ctx = runtime.Context(str(out))
+    assert _run(ctx, 'Debug.Print Range("C1").Formula2, Range("D1").Formula2') == [
+        "=LET(f,LAMBDA(x,[y],IF(ISOMITTED(y),x,y)),f(1)) =MAP(A1:A2,LAMBDA(v,v*2))"
+    ]
+
+
 def test_many_writes_to_a_workbook_of_many_formulas_take_time_in_proportion(tmp_path):
     def seconds(n):
         vba = (

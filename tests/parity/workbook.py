@@ -27,7 +27,7 @@ def build(folder, with_macros=True):
             (vba / f"{name}.bas").write_text(source, encoding="utf-8")
     else:
         builder.vba_project = lambda modules, project_id: b""
-    spec = {"sheets": probes.sheets(index), "styles": probes.STYLES}
+    spec = {"sheets": probes.sheets(index), "styles": probes.STYLES, "names": probes.NAMES}
     path = Path(folder) / "parity.xlsm"
     builder.write_workbook(path, builder.build_workbook("parity", spec, folder=vba))
     return path, probes, index

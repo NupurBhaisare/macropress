@@ -109,6 +109,7 @@ class Book(VBAObject):
         self.name = name
         self.sheets = []
         self.names = {}  # lower name -> list of (scope sheet name or None, refers_to)
+        self.named_lambdas = {}  # a defined name's LAMBDA, by the text it refers to, as worked out once
         self.tables = {}  # lower name -> Table
         self.date1904 = False
         self.manual = False  # the calculation mode the file was saved in
@@ -747,7 +748,7 @@ class NameObject(VBAObject):
         self.book, self.name = book, name
 
     def get_refersto(self):
-        return "=" + self.book.resolve_name(self.name, self.book.active)
+        return "=" + fx.display_syntax(self.book.resolve_name(self.name, self.book.active))
 
     def get_referstorange(self):
         return self.book.active.get_range(self.name)

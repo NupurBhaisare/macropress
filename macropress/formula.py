@@ -76,24 +76,114 @@ FILE_PREFIX = {
     "MINIFS": "_xlfn.MINIFS",
     "IFNA": "_xlfn.IFNA",
     "SINGLE": "_xlfn.SINGLE",
+    # 2.6, as a file Excel saved has them
+    **{
+        name: "_xlfn." + name
+        for name in """TAKE DROP CHOOSECOLS CHOOSEROWS VSTACK HSTACK TOCOL TOROW EXPAND WRAPROWS WRAPCOLS
+       TEXTSPLIT TEXTBEFORE TEXTAFTER LAMBDA ISOMITTED MAP REDUCE SCAN BYROW BYCOL MAKEARRAY""".split()
+    },
     **{name: "_xlfn." + name for name in _NEWER_2010_2013.split()},
 }
 
 
 def file_syntax(text):
-    """A formula as the file stores it: newer functions get their _xlfn. prefix, and @ is _xlfn.SINGLE()."""
+    """A formula as the file stores it: newer functions get their _xlfn. prefix, @ is _xlfn.SINGLE(), and the names
+    LET and LAMBDA bind are _xlpm.x (an optional parameter, [y], _xlop.y where it is bound)."""
     if "@" in text:
         text = _replace_nodes(text, "at", lambda body, node, spans: f"SINGLE({_text_of(body, node[1], spans)})")
+    if _BINDS.search(text):
+        text = _parameters_marked(text)
     return "".join(FILE_PREFIX.get(p.upper(), p) if kind == "func" else p for kind, p in pieces(text))
 
 
 _XLFN = re.compile(r"(?i)^_xlfn\.(?:_xlws\.)?")
+_XLPM = re.compile(r"(?i)^_xlpm\.")
+_XLOP = re.compile(r"(?i)^_xlop\.(.*)$")
+_BINDS = re.compile(r"(?i)\b(?:LET|LAMBDA)\(")
 _PRIMARY = ("ref", "name", "func", "array", "paren")
 
 
+def _param_key(node):
+    """The name a LET or LAMBDA node binds, as kept to look it up (capitals, without _xlpm.), or None. A name may be
+    written like a cell, as LET(A1,1,A1) is (recorded)."""
+    if node[0] == "opt":
+        return node[1].upper()
+    if node[0] == "name":
+        return _XLOP.sub(r"\1", _XLPM.sub("", node[1])).upper()
+    if node[0] == "ref" and re.fullmatch(r"[A-Za-z]{1,3}\d+", node[1]):
+        return node[1].upper()
+    return None
+
+
+def _parameters_marked(text):
+    """The formula with every name LET and LAMBDA bind, and every use of one, written as the file keeps them."""
+    parser = Parser(text)
+    tree = parser.parse()
+    body, edits = parser.body, []
+
+    def mark(node):
+        start, end = parser.spans[id(node)]
+        if node[0] == "opt":
+            edits.append((start, end, "_xlop." + node[1]))
+        elif not body[start:].lower().startswith(("_xlpm.", "_xlop.")):
+            edits.append((start, start, "_xlpm."))
+
+    def walk(node, scope):
+        kind, args = node[0], node[2] if node[0] == "func" else ()
+        if kind == "func" and node[1] in ("LET", "LAMBDA") and args:
+            pairs = (
+                list(zip(args[:-1:2], args[1:-1:2], strict=False))
+                if node[1] == "LET"
+                else [(a, None) for a in args[:-1]]
+            )
+            inner = set(scope)
+            for name, value in pairs:
+                if value is not None:
+                    walk(value, inner)
+                key = _param_key(name)
+                if key is not None:
+                    mark(name)
+                    inner.add(key)
+            return walk(args[-1], inner)
+        if kind in ("name", "ref") and _param_key(node) in scope:
+            return mark(node)
+        if kind == "func" and _XLPM.sub("", node[1]).upper() in scope:
+            mark(node)
+        for child in _children(node):
+            walk(child, scope)
+
+    walk(tree, set())
+    for start, end, new in sorted(edits, reverse=True):
+        body = body[:start] + new + body[end:]
+    return ("=" if text.startswith("=") else "") + body
+
+
+def bound_names(text):
+    """The names a formula's LET and LAMBDA bind, as _param_key keeps them; none where it binds none."""
+    if not _BINDS.search(text):
+        return set()
+    try:
+        tree = parse(text)
+    except VBANotImplemented:
+        return set()
+    out = set()
+    for node in _all(tree):
+        if node[0] == "func" and node[1] in ("LET", "LAMBDA") and node[2]:
+            out |= {_param_key(a) for a in (node[2][:-1:2] if node[1] == "LET" else node[2][:-1])}
+    return out - {None}
+
+
 def display_syntax(text):
-    """A formula as VBA's Formula property shows it: without the file's _xlfn. prefixes, and _xlfn.SINGLE(x) as @x."""
-    text = "".join(_XLFN.sub("", p) if kind == "func" else p for kind, p in pieces(text))
+    """A formula as VBA's Formula property shows it: without the file's _xlfn. and _xlpm. prefixes, an optional
+    parameter (_xlop.y) as [y], and _xlfn.SINGLE(x) as @x."""
+    out = []
+    for kind, p in pieces(text):
+        if kind == "func":
+            p = _XLPM.sub("", _XLFN.sub("", p))
+        elif kind == "name":
+            p = _XLOP.sub(r"[\1]", _XLPM.sub("", p))
+        out.append(p)
+    text = "".join(out)
     if "SINGLE(" in text.upper():
 
         def at(body, node, spans):
@@ -134,6 +224,8 @@ def _replace_nodes(text, kind, write):
 def _children(node):
     if node[0] == "func":
         return node[2]
+    if node[0] == "call":
+        return [node[1], *node[2]]
     if node[0] == "bin":
         return [node[2], node[3]]
     if node[0] == "range":
@@ -191,7 +283,11 @@ def normalized(text, find_sheet):
 _MANY_RESULTS = {"INDEX", "IF", "ROW", "COLUMN", "OFFSET", "INDIRECT", "CHOOSE", "IFS", "SWITCH", "IFERROR", "IFNA",
                  "XLOOKUP", "LOOKUP", "TRANSPOSE", "MMULT", "MINVERSE", "FREQUENCY", "TREND", "GROWTH", "LINEST",
                  "LOGEST", "SORT", "SORTBY", "UNIQUE", "FILTER", "SEQUENCE", "RANDARRAY", "TEXTSPLIT", "LET",
-                 "SINGLE"}  # fmt: skip
+                 "SINGLE", "TAKE", "DROP", "CHOOSECOLS", "CHOOSEROWS", "VSTACK", "HSTACK", "TOCOL", "TOROW", "EXPAND",
+                 "WRAPROWS", "WRAPCOLS", "MAP", "REDUCE", "SCAN", "BYROW", "BYCOL", "MAKEARRAY", "LAMBDA"}  # fmt: skip
+# Of those, the ones a formula that is not a dynamic array is shown to end on with @ before them (=@TAKE(A1:A6,2)),
+# and takes the first value of: recorded.
+_FIRST_OF = {"FILTER", "TAKE", "SEQUENCE", "TEXTSPLIT"}
 
 
 class _Unsure(Exception):
@@ -250,7 +346,7 @@ def _implicit(tree, spans, size, top="top"):
             return False
         if name == "CHOOSE":  # an index from a range is one value; an array constant picks many
             return any(many(a) for a in args[1:]) or bool(args and args[0][0] == "array" and many(args[0]))
-        if name == "INDIRECT":
+        if name in ("INDIRECT", *_FIRST_OF):
             return True
         if name == "OFFSET":  # as tall and wide as the reference unless told, and a size given is taken as many
             if not args or args[0][0] not in ("ref", "name"):
@@ -283,6 +379,8 @@ def _implicit(tree, spans, size, top="top"):
             return walk(node[1], "operand" if place in ("top", "value") and kind != "paren" else place)
         if kind == "at":
             return
+        if kind in ("call", "opt"):
+            raise _Unsure
         if kind == "bin":
             inner = "array" if place == "array" else "operand"
             walk(node[2], inner)
@@ -293,7 +391,16 @@ def _implicit(tree, spans, size, top="top"):
         if kind == "func":
             name, args = node[1], node[2]
             if place in ("top", "value", "operand") and _func_many(node):
-                if place == "value" or name not in ("INDEX", "IF", "ROW", "COLUMN", "CHOOSE", "OFFSET", "INDIRECT"):
+                if place == "value" or name not in (
+                    "INDEX",
+                    "IF",
+                    "ROW",
+                    "COLUMN",
+                    "CHOOSE",
+                    "OFFSET",
+                    "INDIRECT",
+                    *_FIRST_OF,
+                ):
                     raise _Unsure
                 sites.append(node)
                 place = "ref"  # under the @, what it hands back is taken whole
@@ -411,7 +518,7 @@ def _all(node):
 
 def bare_name(name):
     n = name.upper()
-    for prefix in ("_XLFN._XLWS.", "_XLFN.", "_XLWS."):
+    for prefix in ("_XLFN._XLWS.", "_XLFN.", "_XLWS.", "_XLPM."):
         if n.startswith(prefix):
             n = n[len(prefix) :]
     return n
@@ -422,10 +529,16 @@ def bare_name(name):
 # ---------------------------------------------------------------------------
 
 
+_OPTIONAL = re.compile(r"\[[A-Za-z_][\w.]*\]")
+
+
 def tokenize(text, offsets=None):
-    """The formula's tokens, (kind, text), spaces left out; offsets, a list, is given where each starts."""
+    """The formula's tokens, (kind, text), spaces left out; offsets, a list, is given where each starts. A [name]
+    standing alone is LAMBDA's optional parameter ("opt")."""
     out, pos = [], 0
     for kind, piece in pieces(text):
+        if kind is None and _OPTIONAL.fullmatch(piece):
+            kind = "opt"
         if kind is None:
             raise VBANotImplemented(f"formula syntax at {text[pos : pos + 20]!r} in ={text}")
         if kind != "ws":
@@ -440,8 +553,9 @@ class Parser:
     """Reads a formula into nodes: ("num", x), ("str", s), ("bool", b), ("err", e), ("ref", text), ("name", text),
     ("func", NAME, [args]), ("array", [[values]]), ("bin", op, a, b), ("neg", a), ("pct", a), ("paren", a),
     ("at", a) for @ (one value of what follows), ("range", a, b) for a:b between references that are not both cells
-    (A1:INDEX(A:A,5)), ("missing",) for an argument left empty. `spans` keeps where each node starts and ends in the
-    text (after the =)."""
+    (A1:INDEX(A:A,5)), ("missing",) for an argument left empty, ("call", f, [args]) for a call of what a function or
+    parentheses give (LAMBDA(x,x*2)(5)), and ("opt", name) for LAMBDA's optional parameter [name]. `spans` keeps where
+    each node starts and ends in the text (after the =)."""
 
     def __init__(self, text):
         self.text = text
@@ -502,6 +616,9 @@ class Parser:
         """A value, and the range from it to another reference after a colon, which binds before any operator."""
         first = self.i
         node = self._mark(self._primary(), first)
+        while self.peek() == ("op", "(") and node[0] in ("func", "paren", "call"):
+            self.take()
+            node = self._mark(("call", node, self._args()), first)
         while self.peek() == ("op", ":"):
             self.take()
             start = self.i
@@ -562,20 +679,9 @@ class Parser:
             return ("ref", val)
         if kind == "func":
             self.take()  # (
-            args = []
-            if self.peek() == ("op", ")"):
-                self.take()
-                return ("func", bare_name(val), args)
-            while True:
-                if self.peek() in (("op", ","), ("op", ")")):
-                    args.append(("missing",))
-                else:
-                    args.append(self.expr(0))
-                k, v = self.take()
-                if (k, v) == ("op", ")"):
-                    return ("func", bare_name(val), args)
-                if (k, v) != ("op", ","):
-                    raise VBANotImplemented(f"formula syntax in ={self.text}")
+            return ("func", bare_name(val), self._args())
+        if kind == "opt":
+            return ("opt", val[1:-1])
         if kind == "name":
             if val.upper() in ("TRUE", "FALSE"):
                 return ("bool", val.upper() == "TRUE")
@@ -586,6 +692,27 @@ class Parser:
                 raise VBANotImplemented(f"formula syntax in ={self.text}")
             return ("paren", node)
         raise VBANotImplemented(f"formula syntax near {val!r} in ={self.text}")
+
+
+def _args_of(parser):
+    """A call's arguments, after its (: one left empty is ("missing",)."""
+    args = []
+    if parser.peek() == ("op", ")"):
+        parser.take()
+        return args
+    while True:
+        if parser.peek() in (("op", ","), ("op", ")")):
+            args.append(("missing",))
+        else:
+            args.append(parser.expr(0))
+        k, v = parser.take()
+        if (k, v) == ("op", ")"):
+            return args
+        if (k, v) != ("op", ","):
+            raise VBANotImplemented(f"formula syntax in ={parser.text}")
+
+
+Parser._args = _args_of
 
 
 def _bad_array(text):
@@ -676,11 +803,25 @@ class Array:
         return [[self.cell(i, j) for j in range(cols)] for i in range(rows)]
 
 
+class Lambda:
+    """What LAMBDA gives: a function of its parameters, [(name, optional)], working out `body` with the names bound
+    where it was made (`scope`) and its arguments. A cell that ends on one shows #CALC!."""
+
+    def __init__(self, params, body, scope):
+        self.params, self.body, self.scope = params, body, scope
+
+
+_OMITTED = XLError("omitted")  # what a parameter in [ ] left out is bound to: blank where used (recorded)
+_MISSING = XLError("missing")  # an argument left out of a call
+
+
 def scalar(v):
     if isinstance(v, Array):
         if v.extent == (1, 1):
             return v.cell(0, 0)
         raise VBANotImplemented("an array where a formula expects one value")
+    if isinstance(v, Lambda):
+        raise VBANotImplemented("a LAMBDA where a formula wants a value")
     return v
 
 
@@ -775,6 +916,11 @@ class _Err(Exception):
     def __init__(self, err):
         super().__init__(str(err))
         self.err = err
+
+
+class _NotCells(_Err):
+    """A name that stands for a LAMBDA, where cells are wanted: it reads none, and what its LAMBDA reads is known only
+    as it is worked out."""
 
 
 def type_rank(v):
@@ -946,9 +1092,11 @@ def _each(fn, operands):
         except ZeroDivisionError:
             return XLError("#DIV/0!")
         if isinstance(v, Array):  # cells handed back for each value: one cell is its value
-            if v.extent != (1, 1):
+            if v.extent != (1, 1) and v.rect is not None:
                 raise VBANotImplemented("a function handing back a range for each value of an array")
-            return v.cell(0, 0)
+            return v.cell(0, 0)  # an array worked out for each value: its first, as Excel shows (SEQUENCE(A1:A2))
+        if isinstance(v, Lambda):
+            raise VBANotImplemented("a LAMBDA for each value of an array")
         return v
 
     start = 0  # from this row on, every row is alike
@@ -976,6 +1124,8 @@ class Evaluator:
         self.cell = cell
         self.arrays = arrays
         self.areas = {}  # the range arguments of SUMIF and the like, read once: id(node) -> Array
+        self.scope = {}  # the names LET and LAMBDA bind where the formula is being worked out (see _param_key)
+        self.depth = 0  # LAMBDAs called and not yet worked out
 
     def run(self, node):
         try:
@@ -984,7 +1134,8 @@ class Evaluator:
                 if _many(a) or _many(b):
                     return _each(lambda x, y, op=node[1]: _sum_end(op, x, y), [a, b])
                 return _sum_end(node[1], single(a), single(b))
-            return self.ev(node)
+            v = self.ev(node)
+            return XLError("#CALC!") if isinstance(v, Lambda) else v
         except _Err as e:
             return e.err
         except ZeroDivisionError:
@@ -1000,6 +1151,14 @@ class Evaluator:
         on one sheet (#VALUE! across two)."""
         from .excel import parse_area
 
+        key = self.bound_key(node)
+        if key is not None:  # a name LET or LAMBDA binds, standing for the cells it was given
+            v = self.scope[key]
+            if isinstance(v, Array) and v.rect is not None:
+                return v.rect
+            raise VBANotImplemented(f"{node[1]}, which LET or LAMBDA binds to a value, where cells are wanted")
+        if node[0] == "name" and self.named_lambda(node[1]) is not None:
+            raise _NotCells(XLError("#VALUE!"))
         if node[0] == "range":
             a, b = self._cells_of(node[1]), self._cells_of(node[2])
             if a[0] is not b[0]:
@@ -1050,6 +1209,72 @@ class Evaluator:
             rows = [[self.read(sheet, r, c) for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)]
         return Array(rows, extent, rect)
 
+    def bound_key(self, node):
+        """The key of the name a LET or LAMBDA binds that this name (or a name written like a cell) stands for."""
+        if not self.scope or node[0] not in ("name", "ref"):
+            return None
+        key = _param_key(node)
+        return key if key in self.scope else None
+
+    def bound(self, key):
+        """A bound name where it is used: one cell gives its value; cells, an array, a value or a LAMBDA themselves; a
+        parameter left out, blank."""
+        v = self.scope[key]
+        if v is _OMITTED:
+            return None
+        if isinstance(v, Array) and v.rect is not None and v.extent == (1, 1):
+            return v.cell(0, 0)
+        return v
+
+    def named_lambda(self, name):
+        """A LAMBDA the workbook keeps as a defined name (Name Manager), worked out once; None for any other name."""
+        if name.lower() not in self.book.names:
+            return None
+        text = self.book.resolve_name(name, self.sheet)
+        if text is None or not re.match(r"(?i)^=?(?:_xlfn\.)?LAMBDA\(", text.lstrip()):
+            return None
+        made = self.book.named_lambdas.get(text)
+        if made is None:
+            tree = parse("=" + display_syntax(text.lstrip().lstrip("=")))
+            made = self.book.named_lambdas[text] = f_lambda(Evaluator(self.book, self.sheet, self.read), tree[2])
+        return made
+
+    LAMBDA_DEPTH = 200  # Excel goes on to some thousands (5,000 deep, not 10,000: recorded)
+
+    def invoke(self, lam, args):
+        """A LAMBDA called with these argument nodes, each worked out here: a reference stays the cells it names."""
+        values = []
+        for node in args:
+            try:
+                values.append(_MISSING if node[0] == "missing" else self.keep(node))
+            except _Err as e:
+                values.append(e.err)
+        return self.apply(lam, values)
+
+    def apply(self, lam, values):
+        """A LAMBDA worked out for these values: more of them than it has parameters, or fewer than those not in [ ],
+        is #VALUE!; a parameter in [ ] left out or left empty is omitted, any other left empty is blank (recorded)."""
+        if not isinstance(lam, Lambda):
+            raise VBANotImplemented("calling what is not a LAMBDA")
+        params = lam.params
+        if len(values) > len(params) or any(not optional for _, optional in params[len(values) :]):
+            raise _Err(XLError("#VALUE!"))
+        scope = dict(lam.scope)
+        for i, (name, optional) in enumerate(params):
+            v = values[i] if i < len(values) else _MISSING
+            scope[name] = (_OMITTED if optional else None) if v is _MISSING else v
+        if self.depth >= self.LAMBDA_DEPTH:
+            raise VBANotImplemented(f"a LAMBDA calling itself more than {self.LAMBDA_DEPTH} deep")
+        saved, self.scope = self.scope, scope
+        self.depth += 1
+        try:
+            return self.ev(lam.body)
+        except RecursionError as err:
+            raise VBANotImplemented("a LAMBDA calling itself deeper than MacroPress can follow") from err
+        finally:
+            self.scope = saved
+            self.depth -= 1
+
     def ev(self, node):
         kind = node[0]
         if kind in ("num", "str", "bool", "const"):
@@ -1060,6 +1285,17 @@ class Evaluator:
             return None
         if kind == "array":
             return Array([list(row) for row in node[1]])
+        key = self.bound_key(node)
+        if key is not None:
+            return self.bound(key)
+        if kind == "name":
+            lam = self.named_lambda(node[1])
+            if lam is not None:
+                return lam
+        if kind == "call":
+            return self.invoke(self.ev(node[1]), node[2])
+        if kind == "opt":
+            raise VBANotImplemented(f"[{node[1]}] outside the parameters of a LAMBDA")
         if kind in ("ref", "name", "range"):
             rect = self.rect_of(node)
             sheet, r1, c1, r2, c2 = rect
@@ -1088,6 +1324,12 @@ class Evaluator:
         one cell too (IF(c, A1) is the cell A1, which SUM reads as a cell)."""
         while node[0] == "paren":
             node = node[1]
+        key = self.bound_key(node)
+        if key is not None:
+            v = self.scope[key]
+            return None if v is _OMITTED else v
+        if node[0] == "name" and self.named_lambda(node[1]) is not None:
+            return self.named_lambda(node[1])
         if node[0] in ("ref", "name", "range"):
             return self.cells(self.rect_of(node))
         return self.ev(node)
@@ -1151,8 +1393,13 @@ class Evaluator:
     def call(self, name, args):
         """A function, its arguments taken as TAKES says: those that want one value are worked out first, and where
         one is an array the function is worked out for each of its values, an array of results."""
+        if name in self.scope:  # a LAMBDA bound by LET or LAMBDA, called: f(1)
+            return self.invoke(self.scope[name], args)
         fn = FUNCTIONS.get(name)
         if fn is None:
+            lam = self.named_lambda(name)
+            if lam is not None:
+                return self.invoke(lam, args)
             raise VBANotImplemented(f"formula function {name}")
         takes = TAKES.get(name, "r")
         given, arrays = list(args), {}
@@ -1916,36 +2163,88 @@ def f_index(ev, args):
 
 
 def f_unique(ev, args):
+    """UNIQUE(array, [by_col], [exactly_once]): its rows (or columns) without the ones seen before, text without
+    regard to case; exactly_once keeps those that stand once only, and none is #CALC! (recorded)."""
     arr = ev.array(ev.ev(args[0]))
     by_col = ev.arg(args, 1, False)
     once = ev.arg(args, 2, False)
-    if (by_col is not None and truth(by_col)) or (once is not None and truth(once)):
-        raise VBANotImplemented("UNIQUE by column or exactly once")
-    seen, out = set(), []
-    for row in arr.rows:
+    by_col, once = by_col is not None and truth(by_col), once is not None and truth(once)
+    lines = [list(col) for col in zip(*arr.full(), strict=True)] if by_col else [list(row) for row in arr.rows]
+    counts, first = {}, []
+    for line in lines:
         key = tuple(  # TRUE and 1 are two values (in Python they are equal)
-            ("t", v.casefold()) if isinstance(v, str) else ("b", v) if isinstance(v, bool) else ("v", v) for v in row
+            ("t", v.casefold()) if isinstance(v, str) else ("b", v) if isinstance(v, bool) else ("v", v) for v in line
         )
-        if key not in seen:
-            seen.add(key)
-            out.append(list(row))
-    return Array(out)
+        if key not in counts:
+            counts[key] = 0
+            first.append((key, line))
+        counts[key] += 1
+    out = [line for key, line in first if not once or counts[key] == 1]
+    if not out:
+        raise _Err(XLError("#CALC!"))
+    return Array([list(row) for row in zip(*out, strict=True)] if by_col else out)
 
 
 def f_sort(ev, args):
+    """SORT(array, [index], [order], [by_col]): its rows by column index (or its columns by row index), blanks last
+    whichever the order."""
     arr = ev.array(ev.ev(args[0]))
     idx = int(num(ev.arg(args, 1, 1.0, blank=1.0)))
     order = num(ev.arg(args, 2, 1.0, blank=1.0))
     by_col = ev.arg(args, 3, False)
-    if by_col is not None and truth(by_col):
-        raise VBANotImplemented("SORT by column")
-    if order not in (1, -1) or not 1 <= idx <= arr.shape[1]:
+    by_col = by_col is not None and truth(by_col)
+    lines = [list(col) for col in zip(*arr.full(), strict=True)] if by_col else arr.rows
+    if order not in (1, -1) or not 1 <= idx <= arr.shape[0 if by_col else 1]:
         raise _Err(XLError("#VALUE!"))
-    blanks = [r for r in arr.rows if r[idx - 1] is None]
+    blanks = [r for r in lines if r[idx - 1] is None]
     rest = sorted(
-        (r for r in arr.rows if r[idx - 1] is not None), key=lambda r: sort_value_key(r[idx - 1]), reverse=(order == -1)
+        (r for r in lines if r[idx - 1] is not None), key=lambda r: sort_value_key(r[idx - 1]), reverse=(order == -1)
     )
-    return Array(rest + blanks)
+    out = rest + blanks
+    return Array([list(row) for row in zip(*out, strict=True)] if by_col else out)
+
+
+def f_let(ev, args):
+    """LET(name, value, ..., calculation): each name stands for its value in what follows it, a reference for its
+    cells. A value that is an error is that error only where its name is used (LET(x,1/0,5) is 5, recorded)."""
+    if len(args) < 3 or not len(args) % 2:
+        raise VBANotImplemented("LET with other than names and values, and a calculation")
+    saved = ev.scope
+    try:
+        for name, node in zip(args[:-1:2], args[1:-1:2], strict=True):
+            key = _param_key(name)
+            if key is None:
+                raise VBANotImplemented(f"LET naming {name[0]} {name[1]!s}")
+            try:
+                v = ev.keep(node)
+            except _Err as e:
+                v = e.err
+            ev.scope = {**ev.scope, key: v}
+        return ev.ev(args[-1])
+    finally:
+        ev.scope = saved
+
+
+def f_lambda(ev, args):
+    """LAMBDA(parameter, ..., calculation): a function, called as LAMBDA(x,x*2)(5), by the name LET gives it, or by a
+    defined name; given to MAP and the rest. A parameter in [ ] may be left out (ISOMITTED)."""
+    if not args:
+        raise VBANotImplemented("LAMBDA()")
+    params = []
+    for node in args[:-1]:
+        key = _param_key(node)
+        if key is None or key in [name for name, _ in params]:
+            raise VBANotImplemented(f"LAMBDA with a parameter {node[0]} {node[1]!s}")
+        params.append((key, node[0] == "opt" or (node[0] == "name" and node[1].lower().startswith("_xlop."))))
+    return Lambda(params, args[-1], ev.scope)
+
+
+def f_isomitted(ev, args):
+    """ISOMITTED(parameter): whether a LAMBDA's parameter in [ ] was left out, or left empty (recorded)."""
+    key = ev.bound_key(args[0]) if args else None
+    if key is None:
+        raise VBANotImplemented("ISOMITTED of what is not a parameter of a LAMBDA")
+    return ev.scope[key] is _OMITTED
 
 
 def f_sumproduct(ev, args):
@@ -2201,8 +2500,17 @@ def unnamed_reads(tree, rect_of):
     """The cells a formula reads past the references it names, for knowing when it is stale: SUMIF's and AVERAGEIF's
     sum range, read over the criteria range's size (see _resized), and a range between references (A1:INDEX(A:A,5)),
     whose cells lie in the box around every reference inside it. [(sheet, r1, c1, r2, c2)], or None where SUMIF's
-    ranges are not references the formula names (INDEX(...)) and what it reads is known only as it is worked out."""
+    ranges are not references the formula names (INDEX(...)), or where it calls or hands on a LAMBDA kept as a defined
+    name, and what it reads is known only as it is worked out."""
     out = []
+    for node in _all(tree):  # a LAMBDA kept as a defined name, called or handed on: what its calculation reads
+        if node[0] == "name" or (node[0] == "func" and node[1] not in FUNCTIONS):
+            try:
+                rect_of(node if node[0] == "name" else ("name", node[1]))
+            except _NotCells:
+                return None
+            except (_Err, VBANotImplemented):
+                pass
     for node in _all(tree):
         if node[0] == "range":
             boxes = {}
@@ -2330,6 +2638,11 @@ def check_entry(text):
         name, args = node[1], node[2]
         fewest, most, step, wants = _ARGUMENTS[name]
         refused = not fewest <= len(args) <= most or (len(args) - fewest) % step
+        if name in ("LET", "LAMBDA") and not refused:  # names, each bound once (a repeated one is refused: recorded)
+            keys = [_param_key(a) for a in (args[:-1:2] if name == "LET" else args[:-1])]
+            refused = None in keys or len(set(keys)) != len(keys)
+        if name == "SORTBY" and len(args) > 3 and not len(args) % 2:  # by_array and sort_order in pairs (recorded)
+            refused = True
         for i, a in enumerate(args if not refused else ()):
             while a[0] == "paren":
                 a = a[1]
@@ -2431,6 +2744,9 @@ FUNCTIONS = {
     "UNIQUE": f_unique,
     "SORT": f_sort,
     "SUMPRODUCT": f_sumproduct,
+    "LET": f_let,
+    "LAMBDA": f_lambda,
+    "ISOMITTED": f_isomitted,
     "ROW": f_row,
     "COLUMN": f_column,
     "ROWS": f_rows,
@@ -2446,4 +2762,4 @@ FUNCTIONS = {
     "MINIFS": f_minifs,
 }
 
-from . import library  # noqa: E402, F401 - Excel's other functions, which register themselves here
+from . import arrays as _newer, library  # noqa: E402, F401 - Excel's other functions, which register themselves here

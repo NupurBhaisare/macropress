@@ -259,8 +259,12 @@ class R1C1Formula:
 
 def written_r1c1(text):
     """Whether a formula given to Formula is R1C1 style: Excel reads it so when it names a reference A1 style cannot
-    (R1C1, RC[-1], R[2]), which no defined name may be."""
-    return any(kind == "name" and re.fullmatch(_ATOM, piece, re.I) for kind, piece in _pieces(text))
+    (R1C1, RC[-1], R[2]), which no defined name may be; but r and c may be names a LET or LAMBDA of the formula binds
+    (=LET(r,A1:A6,SUM(r)) is read A1 style: recorded)."""
+    from ..formula import bound_names  # noqa: PLC0415 - formula reads references with this module
+
+    atoms = {piece.upper() for kind, piece in _pieces(text) if kind == "name" and re.fullmatch(_ATOM, piece, re.I)}
+    return bool(atoms) and not atoms <= bound_names(text)
 
 
 # ---------------------------------------------------------------------------

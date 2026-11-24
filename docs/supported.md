@@ -217,20 +217,22 @@ formula or a `SUM` that ends on a sum which all but cancels gives 0, text in ari
 (`="5%"+1`), and `SUM`, `COUNT` and the like count text and logical values written in the formula but pass over
 those read from cells.
 
-Functions: ABS, AGGREGATE, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, CEILING, CEILING.MATH, CEILING.PRECISE, CHAR, CHOOSE,
-CLEAN, CODE, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA, COUNTBLANK, COUNTIF, COUNTIFS, DATE, DATEDIF, DAY,
-DAYS, DAYS360, DB, DDB, EDATE, EOMONTH, ERROR.TYPE, EVEN, EXACT, EXP, FIND, FLOOR, FLOOR.MATH, FLOOR.PRECISE, FV,
-HLOOKUP, HOUR, IF, IFERROR, IFNA, IFS, INDEX, INDIRECT, INT, IPMT, ISBLANK, ISERR, ISERROR, ISEVEN, ISLOGICAL, ISNA,
-ISNONTEXT, ISNUMBER, ISO.CEILING, ISODD, ISOWEEKNUM, ISREF, ISTEXT, LARGE, LEFT, LEN, LN, LOG, LOG10, LOOKUP, LOWER,
+Functions: ABS, AGGREGATE, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, BYCOL, BYROW, CEILING, CEILING.MATH, CEILING.PRECISE,
+CHAR, CHOOSE, CHOOSECOLS, CHOOSEROWS, CLEAN, CODE, COLUMN, COLUMNS, CONCAT, CONCATENATE, COUNT, COUNTA, COUNTBLANK,
+COUNTIF, COUNTIFS, DATE, DATEDIF, DAY, DAYS, DAYS360, DB, DDB, DROP, EDATE, EOMONTH, ERROR.TYPE, EVEN, EXACT, EXP,
+EXPAND, FILTER, FIND, FLOOR, FLOOR.MATH, FLOOR.PRECISE, FV, HLOOKUP, HOUR, HSTACK, IF, IFERROR, IFNA, IFS, INDEX,
+INDIRECT, INT, IPMT, ISBLANK, ISERR, ISERROR, ISEVEN, ISLOGICAL, ISNA, ISNONTEXT, ISNUMBER, ISO.CEILING, ISODD,
+ISOMITTED, ISOWEEKNUM, ISREF, ISTEXT, LAMBDA, LARGE, LEFT, LEN, LET, LN, LOG, LOG10, LOOKUP, LOWER, MAKEARRAY, MAP,
 MATCH, MAX, MAXIFS, MEDIAN, MID, MIN, MINIFS, MINUTE, MOD, MODE, MODE.SNGL, MONTH, MROUND, N, NA, NETWORKDAYS,
 NETWORKDAYS.INTL, NOT, NOW, NPER, NPV, ODD, OFFSET, OR, PERCENTILE, PERCENTILE.EXC, PERCENTILE.INC, PI, PMT, POWER,
-PPMT, PRODUCT, PROPER, PV, QUARTILE, QUARTILE.EXC, QUARTILE.INC, QUOTIENT, RANK, RANK.AVG, RANK.EQ, REPLACE, REPT,
-RIGHT, ROUND, ROUNDDOWN, ROUNDUP, ROW, ROWS, SEARCH, SECOND, SIGN, SLN, SMALL, SORT, SQRT, STDEV, STDEV.P, STDEV.S,
-STDEVP, SUBSTITUTE, SUBTOTAL, SUM, SUMIF, SUMIFS, SUMPRODUCT, SWITCH, SYD, T, TEXTJOIN, TIME, TODAY, TRIM, TRUNC,
-TYPE, UNICHAR, UNICODE, UNIQUE, UPPER, VALUE, VAR, VAR.P, VAR.S, VARP, VLOOKUP, WEEKDAY, WEEKNUM, WORKDAY,
-WORKDAY.INTL, XLOOKUP, XMATCH, XNPV, YEAR, YEARFRAC. Arithmetic, comparison and `&` operators, references to other
-sheets, defined names, whole rows and columns, ranges that end on a function's cells (`A1:INDEX(A:A,5)`), array
-constants (`{1,2;3,4}`), and dynamic arrays that spill (`=A1:A5*2`, `UNIQUE`, `SORT`) are all calculated.
+PPMT, PRODUCT, PROPER, PV, QUARTILE, QUARTILE.EXC, QUARTILE.INC, QUOTIENT, RANK, RANK.AVG, RANK.EQ, REDUCE, REPLACE,
+REPT, RIGHT, ROUND, ROUNDDOWN, ROUNDUP, ROW, ROWS, SCAN, SEARCH, SECOND, SEQUENCE, SIGN, SLN, SMALL, SORT, SORTBY, SQRT,
+STDEV, STDEV.P, STDEV.S, STDEVP, SUBSTITUTE, SUBTOTAL, SUM, SUMIF, SUMIFS, SUMPRODUCT, SWITCH, SYD, T, TAKE, TEXTAFTER,
+TEXTBEFORE, TEXTJOIN, TEXTSPLIT, TIME, TOCOL, TODAY, TOROW, TRIM, TRUNC, TYPE, UNICHAR, UNICODE, UNIQUE, UPPER, VALUE,
+VAR, VAR.P, VAR.S, VARP, VLOOKUP, VSTACK, WEEKDAY, WEEKNUM, WORKDAY, WORKDAY.INTL, WRAPCOLS, WRAPROWS, XLOOKUP, XMATCH,
+XNPV, YEAR, YEARFRAC. Arithmetic, comparison and `&` operators, references to other sheets, defined names, whole rows
+and columns, ranges that end on a function's cells (`A1:INDEX(A:A,5)`), array constants (`{1,2;3,4}`), and dynamic
+arrays that spill (`=A1:A5*2`, `FILTER`, `SORT`, `SEQUENCE`) are all calculated.
 
 **Ranges and arrays** are worked out as Excel works them out:
 
@@ -338,12 +340,41 @@ constants (`{1,2;3,4}`), and dynamic arrays that spill (`=A1:A5*2`, `UNIQUE`, `S
   calls none of these functions stays General, where Excel may give it the format of a cell it reads (`=A1+1`): not
   modelled yet.
 
+**The newer functions** answer as Excel does (group 2.6 of the [roadmap](roadmap.md)):
+
+- **`FILTER`** keeps the rows its include (a column as tall as the array) or columns (a row as wide) says: `TRUE` or a
+  number other than 0; a blank is `FALSE`, text `#VALUE!`, an error that error, and an include of another size
+  `#VALUE!`. Keeping nothing is `if_empty`, or `#CALC!`. **`SORTBY`** sorts by keys as tall or as wide, given in pairs
+  of key and order, ties kept as they were; it and `SORT` put blanks last whichever the order. `SORT` sorts columns,
+  and `UNIQUE` finds columns, and the values that stand once only (none is `#CALC!`).
+- **`SEQUENCE`** adds its step to the number before it (the ninth of `=SEQUENCE(9,1,0,0.1)` is 0.7999999999999999);
+  no rows is `#CALC!`. Worked out for each value of a range, as for its size, each shows its first number.
+- **Shaping**: `TAKE`, `DROP`, `CHOOSEROWS` and `CHOOSECOLS` (a number below 0 counts from the end; 0 or past it is
+  `#VALUE!`, taking or dropping everything `#CALC!`), `VSTACK` and `HSTACK` (padded with `#N/A`), `TOCOL` and `TOROW`
+  (passing over blanks, errors or both), `EXPAND`, `WRAPROWS` and `WRAPCOLS` (padded with `#N/A` or what they are
+  given).
+- **Text**: `TEXTSPLIT` splits into rows, then each into columns, at the longest delimiter where several match, and
+  pads with `#N/A`; `TEXTBEFORE` and `TEXTAFTER` find the nth delimiter from either end (with `match_end` the end of
+  the text is one more) and are `#N/A` where there is none. A number is made text first (`=TEXTAFTER(5.25,".")` is
+  "25").
+- **`LET` and `LAMBDA`**: a name `LET` binds stands for its value in what follows it, a reference for its cells
+  (`=LET(r,A1:A6,ROW(r))`), and an error only where it is used (`=LET(x,1/0,5)` is 5). A `LAMBDA` is called as
+  `=LAMBDA(x,x*2)(5)`, by the name `LET` gives it, or by a defined name (a `LAMBDA` kept in the Name Manager); given too
+  many arguments or too few it is `#VALUE!`, a parameter in `[ ]` may be left out (`ISOMITTED`), and a cell that ends
+  on one shows `#CALC!`. Its arguments are the cells they name, so `ROW` of one works. One that calls itself more than
+  200 deep stops the run, where Excel goes on to some thousands.
+- **`MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL` and `MAKEARRAY`** hand their `LAMBDA` the cells (or rows and columns) of
+  a range, and want one value back for each, or the whole is `#CALC!`. `MAP` over arrays of different sizes is `#N/A`
+  past the end of the shorter, the `LAMBDA` not called.
+- Saved, these keep the prefixes Excel's own file has (`_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)`). `#SPILL!` and `#CALC!` read
+  from VBA as `Error 2045` and `Error 2050`.
+
 Formulas can be written and read R1C1 style (`FormulaR1C1`, `Formula2R1C1`): one text written to many cells gives
 each its own formula, and a relative reference that runs off the sheet comes round from its other edge, as in Excel.
 `Formula` reads R1C1 text too where A1 style cannot (`=R1C1`). An A1 reference given to `FormulaR1C1`, which Excel
 turns into a name that cannot exist (`='A1'+1`), stops the run.
 
-A formula using any other function (`TEXT`, `IRR`, `FILTER`, ...), or text that Excel would read by regional
+A formula using any other function (`TEXT`, `IRR`, `CELL`, ...), or text that Excel would read by regional
 settings (a date, a currency sign) does not stop the run. It is saved without a value, for Excel to calculate, and the
 report names it (`FORMULA-NOT-EVALUATED`). A macro that then reads that formula's value does stop, since its value is
 unknown.

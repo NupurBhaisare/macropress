@@ -18,7 +18,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
 | 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font`, unless told to pass over it (1.1 to 1.5 are done) | nothing | small, five pieces |
-| 2 | [Worksheet functions](#2-worksheet-functions) | `FILTER`, `LET`, `TEXT` (2.1 to 2.5 are done) | nothing | large, ships in slices |
+| 2 | [Worksheet functions](#2-worksheet-functions) | `TEXT` (2.1 to 2.6 are done) | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
 | 5 | [Appearance](#5-appearance) | `Font`, `Interior`, `Borders`, `ColumnWidth`, `Merge` | 1, 4 | large |
@@ -262,6 +262,17 @@ value; Excel for Mac names a Variant array `V()` where Windows names it `Variant
 - `Evaluate` and `[…]` beyond a plain reference: a formula in text, read against the active sheet.
 
 ### 2.6 Newer functions
+
+**Status**: done, recorded from Excel first (42 tests), and a copy MacroPress saved opened in Excel to the same values.
+What it settled: `FILTER` takes an include as tall or as wide as the array, a blank in it `FALSE`, text `#VALUE!`;
+`SEQUENCE` adds its step; `SORTBY` wants its keys and orders in pairs (one left without its order is refused as it is
+entered) and keys all one way; `TEXTSPLIT` splits at the longest delimiter that matches; a name may be bound that is
+written like a cell (`=LET(A1,1,A1)` is 1); an error a `LET` name holds counts only where the name is used; `LAMBDA`'s
+arguments, and the values `MAP`, `REDUCE`, `SCAN`, `BYROW` and `BYCOL` hand on, are cells where they are given cells;
+`MAP` pads with `#N/A` without calling its `LAMBDA`; an optional parameter left empty is omitted, and blank where used;
+the file keeps `_xlpm.` before a bound name and `_xlop.` before an optional parameter where it is bound. Left open: a
+`LAMBDA` calling itself more than 200 deep (Excel goes on past 5,000 and gives `#NUM!` by 10,000), `RANDARRAY`, an array
+given for a count (`=TAKE(A1:B6,{1,2})`), and a delimiter whose matches overlap.
 
 `FILTER`, `SEQUENCE`, `LET`, `LAMBDA` and its helpers (`MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL`, `MAKEARRAY`), and
 the functions that shape arrays (`TAKE`, `DROP`, `CHOOSECOLS`, `CHOOSEROWS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,

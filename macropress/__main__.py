@@ -13,6 +13,7 @@ import sys
 
 from . import __version__
 from .api import list_buttons, press, succeeded
+from .runtime import SKIP_APPEARANCE_HELP
 from .source import from_directory, from_workbook
 from .xlsx import find_entry_points
 
@@ -75,6 +76,7 @@ def cmd_press(args):
         answers=args.answer or [],
         environ=environ,
         timeout=args.timeout,
+        skip_appearance=args.skip_appearance,
     )
     return _report(result, 0 if succeeded(result) else 1)
 
@@ -121,6 +123,7 @@ def main(argv=None):
     p.add_argument("--answer", action="append", help="answer to the next MsgBox/InputBox question (repeatable)")
     p.add_argument("--env", action="append", metavar="NAME=VALUE", help='what Environ("NAME") gives (repeatable)')
     p.add_argument("--timeout", type=float, metavar="SECONDS", help="stop the macros when they have run this long")
+    p.add_argument("--skip-appearance", action="store_true", help=SKIP_APPEARANCE_HELP)
     args = ap.parse_args(argv)
     return {"buttons": cmd_buttons, "press": cmd_press, "convert": cmd_convert}[args.cmd](args)
 

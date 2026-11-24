@@ -871,7 +871,9 @@ def run_macro(fn, ctx):
 class Context:
     """One Excel session on one workbook: `xl` in generated code."""
 
-    def __init__(self, workbook_path=None, book=None, now=None, answers=(), environ=None, timeout=None):
+    def __init__(
+        self, workbook_path=None, book=None, now=None, answers=(), environ=None, timeout=None, skip_appearance=False
+    ):
         global _CTX
         self.path = workbook_path
         self.book = book if book is not None else read_workbook(workbook_path)
@@ -883,6 +885,7 @@ class Context:
         self.clock = Clock(self.now)
         self.answers = list(answers)
         self.app = Application(self.book, self.ledger, self.clock, self.answers)
+        self.app.skip_appearance = skip_appearance
         self.book.now = self.now
         self.environ = dict(environ or {})
         self.messages = []
@@ -916,6 +919,12 @@ class Context:
         return _snapshot.take(self.book)
 
 
+SKIP_APPEARANCE_HELP = (
+    "pass over statements that only change how a sheet looks (fonts, fills, borders, alignment, widths and heights, "
+    "tab colours, the window) rather than stop at them; the copy is not formatted as Excel would leave it"
+)
+
+
 class _Step(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         steps = getattr(namespace, "steps", None) or []
@@ -934,13 +943,21 @@ def main(buttons, macros, description="", argv=None):
     ap.add_argument("--answer", action="append", help="answer for the next MsgBox/InputBox question")
     ap.add_argument("--env", action="append", metavar="NAME=VALUE", help='what Environ("NAME") gives (repeatable)')
     ap.add_argument("--timeout", type=float, help="seconds the macros may run in all")
+    ap.add_argument("--skip-appearance", action="store_true", help=SKIP_APPEARANCE_HELP)
     args = ap.parse_args(argv)
     steps = getattr(args, "steps", None) or []
     if not steps:
         ap.error("choose at least one --button or --macro. Buttons: " + ", ".join(repr(b) for b in buttons))
     now = _dt.datetime.strptime(args.now, "%Y-%m-%d %H:%M:%S") if args.now else None
     environ = dict(item.split("=", 1) for item in args.env or [] if "=" in item)
-    ctx = Context(args.input, now=now, answers=args.answer or [], environ=environ, timeout=args.timeout)
+    ctx = Context(
+        args.input,
+        now=now,
+        answers=args.answer or [],
+        environ=environ,
+        timeout=args.timeout,
+        skip_appearance=args.skip_appearance,
+    )
     status = 0
     for i, (kind, name) in enumerate(steps, 1):
         table = buttons if kind == "button" else macros
@@ -955,6 +972,8 @@ def main(buttons, macros, description="", argv=None):
     print(f"saved {args.output}")
     for line in ctx.ledger.report_lines():
         print(line)
+    if ctx.app.passed_over:
+        print("passed over: " + ", ".join(f"{kind} x{n}" for kind, n in sorted(ctx.app.passed_over.items())))
     for kind, text in ctx.messages:
         print(f"{kind}: {text}")
     return status

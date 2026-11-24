@@ -59,7 +59,7 @@ and hand back the result. It works just as well in a script, a scheduled job or 
 
 MacroPress covers macros that move and compute data. It stops, at the line and with the reason, when a macro:
 
-- sets formatting other than number formats: fonts, colours, borders, column widths;
+- sets formatting other than number formats: fonts, colours, borders, column widths (unless told to pass over it);
 - inserts or deletes rows, columns or sheets, or uses `Range.Find`, `SpecialCells`, charts or pivot tables;
 - opens or saves other workbooks, reads or writes files, sends mail, or calls Windows through `Declare` or
   `CreateObject`;
@@ -68,7 +68,9 @@ MacroPress covers macros that move and compute data. It stops, at the line and w
 
 Event procedures (`Worksheet_Change`, `Workbook_Open`) do not run; the report says when a workbook has them.
 [docs/supported.md](docs/supported.md) has the whole list. Many report-building macros format what they build, so
-expect some buttons to stop: the report names the line, and the copy holds what was done up to it. What is planned
+expect some buttons to stop: the report names the line, and the copy holds what was done up to it. With
+`--skip-appearance` they go on past what only changes how a sheet looks, and the copy has the values without the
+look. What is planned
 next, and in what order, is in [docs/roadmap.md](docs/roadmap.md).
 
 ## Install
@@ -115,8 +117,9 @@ $ macropress buttons examples/invoice/invoice.xlsm
 ```
 
 Press buttons by caption or macro name, in order. `Apply discount` asks two questions, which `--answer` answers in
-the order they are asked; `--now` fixes the clock. `--env NAME=VALUE` gives a macro what `Environ("NAME")` returns, and
-`--timeout SECONDS` stops macros that run longer:
+the order they are asked; `--now` fixes the clock. `--env NAME=VALUE` gives a macro what `Environ("NAME")` returns,
+`--timeout SECONDS` stops macros that run longer, and `--skip-appearance` passes over statements that only set fonts,
+fills, borders, widths and the like, rather than stop at them:
 
 ```console
 $ macropress press examples/invoice/invoice.xlsm \
@@ -178,6 +181,7 @@ if not macropress.succeeded(report):
 | `changes` | Per sheet: how many cells changed, the rows with data before and after, whether hidden rows changed, and a few example cells. |
 | `unverified_behaviours` | Where this run met something MacroPress knowingly does differently from Excel (US regional settings, formatting that is not modelled), and anything it relied on that has not been checked against Excel. |
 | `messages` | What the macros showed: `MsgBox` and `InputBox` prompts, and `Debug.Print` output. |
+| `appearance_skipped` | With `--skip-appearance`: the statements passed over, counted by what they set (`Font`, `Interior`, `Borders`, `alignment`, `ColumnWidth`, `RowHeight`, `Tab`, `ActiveWindow`). The copy does not look as Excel would leave it. |
 | `answers_unused` | The answers no question took, when there are any: the macros did not ask what the caller expected. |
 | `error` | Whatever stopped the run outside the buttons, with the stage it stopped at: reading the workbook, converting the VBA, saving the copy. A copy that could not be saved (over the workbook itself, or with another extension) is refused here before anything runs. |
 
@@ -217,7 +221,7 @@ it models.
 It stops with "not modelled" on:
 
 - deleting or inserting rows, columns or cells (`Rows(5).Delete`), which would have to move every reference to them
-- setting fonts, colours and borders (number formats are modelled)
+- setting fonts, colours and borders (number formats are modelled), unless `--skip-appearance` passes over them
 - reaching outside the workbook: `CreateObject`, Outlook, `Shell`, files and folders (`Dir`, `Kill`), other workbooks
 - UserForms, charts, pivot tables, adding sheets or workbooks
 

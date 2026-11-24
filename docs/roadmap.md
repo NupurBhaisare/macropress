@@ -17,7 +17,7 @@ split into eight groups. Each can be built, checked against Excel and released b
 
 | # | Group | Stops macros today at | Needs | Size |
 | --- | --- | --- | --- | --- |
-| 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font` (1.1, 1.3, 1.4 and 1.5 are done) | nothing | small, five pieces |
+| 1 | [First lines of a recorded macro](#1-the-first-lines-of-a-recorded-macro) | `.Font`, unless told to pass over it (1.1 to 1.5 are done) | nothing | small, five pieces |
 | 2 | [Worksheet functions](#2-worksheet-functions) | `FILTER`, `LET`, `TEXT` (2.1 to 2.5 are done) | nothing | large, ships in slices |
 | 3 | [Finding and collecting](#3-finding-and-collecting) | `Find`, `SpecialCells`, `Union`, `New Collection`, `RemoveDuplicates` | nothing (a Windows recording for `Dictionary`) | medium |
 | 4 | [Numbers as text](#4-numbers-as-text) | `.Text` of a date, `Format(x, "mmm-yy")`, `TEXT()` | 1 | medium |
@@ -46,12 +46,13 @@ way to carry on past fonts and colours), while writing fonts, fills and borders 
 
 Five small pieces, in this order. None needs new machinery.
 
-**Status**: 1.1, 1.3, 1.4 and 1.5 are done, each recorded from Excel first; what they still refuse is in
-[supported.md](supported.md). 1.2 waits for the maintainers' decision. Left open, each with Excel's answer recorded in
-the parity suite: format codes with letters Excel reads its own way (`abc` becomes `\abbc`); `AutoFill` of text that
+**Status**: done, each piece recorded from Excel first; what they still refuse is in [supported.md](supported.md).
+Left open, each with Excel's answer recorded in the parity suite: format codes with letters Excel reads its own way (`abc` becomes `\abbc`); `AutoFill` of text that
 counts on (`Item 1`, `Q1`, months, weekdays) and into two directions at once; a cut that moves the end of a range
 along it (Excel stretches the range) or part of a range to another sheet (Excel shrinks it); a second `Protect` with
-other options and another password, whose recorded answers disagree.
+other options and another password, whose recorded answers disagree; for 1.2, values Excel refuses (`Font.Size = 410`,
+`Zoom = 9`), widths and heights between 0 and 1 (Excel hides a row given 0.8 points, not one given 1), and `PageSetup`,
+whose settings turn on the printer and whose buttons go on to print (group 8).
 
 ### 1.1 Setting `NumberFormat`
 
@@ -70,6 +71,16 @@ The model already keeps a number format for every cell, row and column, and the 
   what `NumberFormat` reads afterwards.
 
 ### 1.2 Carrying on past appearance, when asked to
+
+**Status**: done, the maintainers' answer being yes; recorded from Excel first (81 tests). What it settled: Excel takes
+every usual value and refuses those out of range (error 1004, or 9 for a colour index or theme colour past the last);
+on a protected sheet all of it is error 1004 unless the protection allows formatting, but for the tab's colour; a width
+or height of 0 hides, any other (and `AutoFit`) shows again, though not rows a filter hides; formatting a cell or a
+whole row, a row's height and hiding a row count in `UsedRange`, while a column's width, hiding a column and
+formatting the whole sheet do not, and a row fitted or shown again leaves it; a number's `Text` turns on its font and
+its column's width (`##`), text's does not; `AutoFit` is for rows and columns, and `Range("A1:B3").Columns(2)` is one
+column. Found on the way and fixed: `AutoFit` showed nothing again, a hidden row did not count in `UsedRange`, and
+`Columns(2)` of a range counted its cells.
 
 Until group 5, a switch (`--skip-appearance`) that lets a run pass statements which only change how a sheet looks.
 Off by default. *This one is a decision for the maintainers: it trades a faithful-looking copy for a finished run.*
@@ -353,8 +364,9 @@ One reader of format codes, used by `Range.Text`, filters, `Find`, the `TEXT` fu
   pick one of the file's border styles. Two cells share an edge: **probe** what the neighbour reads.
 - **Widths**: a column's width is counted in digits of the workbook's default font, and the file stores it with the
   cell's padding. Keep a table for the usual fonts, and stop for others. Row heights are in points.
-- **`AutoFit`** needs the width of text in a real font, which is not to be had here. It never changes a value. Keep
-  the note, and treat the column as wide enough for `Range.Text` afterwards, since that is what it asks for.
+- **`AutoFit`** needs the width of text in a real font, which is not to be had here. It never changes a value, and
+  what it does show (hidden rows and columns shown again) is modelled since 1.2. A column fitted to some of its cells
+  may be too narrow for the others, so `Range.Text` there stays unknown.
 - **Merged cells**: only the top-left value is kept, and Excel asks first when others hold data: a question.
   `MergeArea`, `UnMerge`, `Merge Across`. Reading the other cells gives `Empty`; writing them: **probe**. Sorting
   over merged cells of different sizes is an error.

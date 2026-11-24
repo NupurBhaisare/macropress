@@ -1,5 +1,7 @@
 """Application and the globals VBA code sees (ActiveSheet, Range, Cells, Workbooks, ...)."""
 
+from collections import Counter
+
 from ..errors import VBANotImplemented, VBARuntimeError
 from ..values import (
     NOTHING,
@@ -12,6 +14,7 @@ from ..values import (
 )
 from .constants import XL_CONSTANTS
 from .functions import APPLICATION_OWN, WorksheetFunction, evaluate
+from .looks import Window
 from .range import Range
 
 # ---------------------------------------------------------------------------
@@ -40,6 +43,9 @@ class Application(VBAObject):
         }
         self.wsf = WorksheetFunction(self)
         self._globals = {}
+        self.skip_appearance = False  # pass over statements that only change how a sheet looks (looks.py)
+        self.passed_over = Counter()  # those passed over, by what they change
+        self.window = Window(self)
 
     def note(self, key, detail=None):
         self.ledger.note(key, detail)
@@ -119,6 +125,9 @@ class Application(VBAObject):
 
     def get_worksheetfunction(self):
         return self.wsf
+
+    def get_activewindow(self):
+        return self.window
 
     def get_cutcopymode(self):
         """xlCopy (1) after a copy, xlCut (2) after a cut, 0 when nothing waits to be pasted."""
@@ -242,6 +251,9 @@ class Globals(VBAObject):
 
     def get_worksheetfunction(self):
         return self.app.wsf
+
+    def get_activewindow(self):
+        return self.app.window
 
     def m_evaluate(self, name):
         """Evaluate, and [A1+1]: against the active sheet, or in a sheet's module that sheet."""

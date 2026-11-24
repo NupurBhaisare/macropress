@@ -74,10 +74,24 @@ The first public release.
   an error back as its value, `WorksheetFunction.X` raises error 1004. Arrays come back from 1, ranges of cells as a
   `Range`; `Transpose`; `WorksheetFunction.Round` is Excel's. `Evaluate`, `Application.Evaluate`,
   `Worksheet.Evaluate` and `[A1+1]` work a formula's text out against the active sheet.
+- Passing over how a sheet looks, when told to ([roadmap](docs/roadmap.md), 1.2), recorded from Excel first (81 more
+  tests in the parity suite): `--skip-appearance` (`skip_appearance=True`) lets a run go past statements that only
+  set fonts, fills, borders, alignment, widths and heights, tab colours and the window, where Excel takes the value
+  given, rather than stop at them, and the report counts them under `appearance_skipped`. What they change that a
+  macro sees is kept: a protected sheet refuses them, a width or height of 0 hides and another shows again, formatted
+  cells and rows given a height count in `UsedRange`, and a number's `Text` is not guessed once its font or column
+  changed. Reading how a sheet looks still stops the run. The constants these statements use (`xlThin`, `xlCenter`,
+  `xlThemeColorAccent1`, ...) are known.
 
 ### Fixed
 
 Found by running those macros in both Excel and MacroPress and comparing every answer.
+
+- **`AutoFit`** did nothing. Excel shows hidden rows and columns again (not rows a filter hides), refuses a range that
+  is neither rows nor columns (`Range("A1").AutoFit`, error 1004) and is refused on a protected sheet; so does
+  MacroPress now. `Text` of a number in a column `AutoFit` may have narrowed gave the number, where Excel can show
+  `#`. A row hidden by hand now counts in `UsedRange`, and `Range("A1:B3").Columns(2)` is one column (its `Count` is
+  1, `For Each` goes through it once), where it counted three cells.
 
 - **VBA the converter stopped at or ran wrongly**: `Case Is > 5`; `Enum` blocks (a member counts on from the one
   before it, and `Shade.Red` names one); `Declare` statements and `#If ... #End If`, read as 64-bit Excel for Windows

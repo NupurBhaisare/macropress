@@ -100,7 +100,9 @@ def _refused_copy(workbook, out):
     return None
 
 
-def press(workbook, buttons, out, *, code=None, now=None, answers=(), environ=None, timeout=None):
+def press(
+    workbook, buttons, out, *, code=None, now=None, answers=(), environ=None, timeout=None, skip_appearance=False
+):
     """Convert the workbook's VBA, press `buttons` (captions or macro names) in order on a copy, and save the copy as
     `out`; the workbook itself is never written. A button that stops ends the run: the steps that ran, and the copy
     as they left it, are still reported and saved.
@@ -111,6 +113,9 @@ def press(workbook, buttons, out, *, code=None, now=None, answers=(), environ=No
     answers  the answers to the macros' MsgBox and InputBox questions, in the order they are asked
     environ  what Environ("NAME") gives, as a dict; a macro that asks for a name not in it stops
     timeout  the seconds the macros may run in all; a run that passes them stops with "stopped: time limit"
+    skip_appearance  pass over statements that only change how a sheet looks (fonts, fills, borders, alignment, widths
+             and heights, tab colours, the window) rather than stop at them; the report's "appearance_skipped" counts
+             them, and the copy is not formatted as Excel would leave it
     """
     from . import codegen, runtime
 
@@ -156,7 +161,9 @@ def press(workbook, buttons, out, *, code=None, now=None, answers=(), environ=No
             if label:
                 shared.setdefault(label.lower(), set()).add(m)
         stage = "the workbook could not be read"
-        ctx = runtime.Context(workbook, now=now, answers=list(answers), environ=environ, timeout=timeout)
+        ctx = runtime.Context(
+            workbook, now=now, answers=list(answers), environ=environ, timeout=timeout, skip_appearance=skip_appearance
+        )
         events = [f"{m.name}.{p.name}" for m, p in project.procedures() if m.kind != "standard" and EVENT.match(p.name)]
         if events:
             ctx.ledger.note("EVENTS-NOT-RUN", ", ".join(events))
@@ -198,6 +205,8 @@ def press(workbook, buttons, out, *, code=None, now=None, answers=(), environ=No
         result["changes"] = _changes(before, ctx.snapshot())
         result["unverified_behaviours"] = [line for line in ctx.ledger.report_lines() if "[verified]" not in line]
         result["messages"] = [f"{k}: {t}" for k, t in ctx.messages]
+        if ctx.app.passed_over:
+            result["appearance_skipped"] = dict(sorted(ctx.app.passed_over.items()))
     except Exception as err:  # noqa: BLE001 - whatever stops the run is reported, with the steps that ran
         result["error"] = f"{stage}: {type(err).__name__}: {err}"
     return result

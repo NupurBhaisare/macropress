@@ -34,6 +34,7 @@ from ..values import (
     to_str,
     typed_number,
 )
+from . import looks
 from .addresses import (
     R1C1Formula,
     area_text,
@@ -498,12 +499,12 @@ class Range(VBAObject):
         return Range(self.sheet, r, c, r, c)
 
     def vba_index(self, args, kwargs):
-        if self.view == "rows" and len(args) == 1:
+        if self.view == "rows" and len(args) == 1:  # still a row: Range("A1:B3").Rows(2).Count is 1
             r = self.r1 + to_long(args[0]) - 1
-            return Range(self.sheet, r, self.c1, r, self.c2)
+            return Range(self.sheet, r, self.c1, r, self.c2, view="rows")
         if self.view == "columns" and len(args) == 1:
             c = self.c1 + to_long(args[0]) - 1
-            return Range(self.sheet, self.r1, c, self.r2, c)
+            return Range(self.sheet, self.r1, c, self.r2, c, view="columns")
         return self.get_cells(*args)
 
     get_item = get_cells
@@ -688,8 +689,68 @@ class Range(VBAObject):
         raise VBANotImplemented("Range.Insert (shifting cells and every reference to them)")
 
     def m_autofit(self):
+        """AutoFit, of rows or columns (of any other range it is error 1004). Widths and heights are not modelled, but
+        what AutoFit does that a macro sees is (recorded): it shows the rows and columns again that were hidden (not
+        rows a filter hides), a fitted row leaves the used range, and what numbers show in a fitted column is not
+        known."""
+        if self.view not in ("rows", "columns"):
+            raise VBARuntimeError(1004, "AutoFit method of Range class failed")
+        self._single_sheet_target("AutoFit")
         self.app.note("FORMATS-NOT-MODELLED")
+        sheet = self.sheet
+        if self.view == "columns":
+            sheet.guard("columns")
+            sheet.show_columns(self.c1, self.c2, True)
+            sheet.looks.restyle(1, self.c1, MAX_ROW, self.c2)
+        else:
+            sheet.guard("rows")
+            sheet.show_rows(self.r1, self.r2, True, "AutoFit")
+            sheet.looks.heights(self.r1, self.r2, own=False)
         return True
+
+    # --- how the cells look: not modelled, passed over when the run is told to (looks.py) ---
+    def get_font(self):
+        return looks.Font(self)
+
+    def get_interior(self):
+        return looks.Interior(self)
+
+    def get_borders(self, index=None):
+        borders = looks.Borders(self)
+        return borders if index is None else borders.vba_index([index], {})
+
+    def m_borderaround(self, linestyle=None, weight=None, colorindex=None, color=None, themecolor=None):
+        looks.border_around(
+            self, linestyle=linestyle, weight=weight, colorindex=colorindex, color=color, themecolor=themecolor
+        )
+        return True
+
+    let_horizontalalignment = looks.setting("HorizontalAlignment")
+    let_verticalalignment = looks.setting("VerticalAlignment")
+    let_orientation = looks.setting("Orientation")
+    let_indentlevel = looks.setting("IndentLevel")
+    let_addindent = looks.setting("AddIndent")
+    let_wraptext = looks.setting("WrapText")
+    let_shrinktofit = looks.setting("ShrinkToFit")
+    let_readingorder = looks.setting("ReadingOrder")
+
+    def let_columnwidth(self, value):
+        """The width passed over; but a width of 0 hides the columns and any other shows them again (recorded)."""
+        width = looks.size(self, "ColumnWidth", value, 255)
+        self.sheet.guard("columns")
+        self.sheet.show_columns(self.c1, self.c2, width > 0)
+        self.sheet.looks.restyle(1, self.c1, MAX_ROW, self.c2)
+        looks.count(self.app, "ColumnWidth")
+
+    def let_rowheight(self, value):
+        """The height passed over; but a height of 0 hides the rows and any other shows again those hidden by hand,
+        and a row given a height counts in the used range (recorded)."""
+        height = looks.size(self, "RowHeight", value, 409.5)
+        self.sheet.guard("rows")
+        self.sheet.show_rows(self.r1, self.r2, height > 0, "RowHeight")
+        if height > 0:
+            self.sheet.looks.heights(self.r1, self.r2, own=True)
+        looks.count(self.app, "RowHeight")
 
     def m_copy(self, destination=None):
         self._single_sheet_target("Copy")
@@ -734,6 +795,8 @@ class Range(VBAObject):
         dr, dc = tr - r1, tc - c1
         whole = (c1, c2) == (1, MAX_COL) or (r1, r2) == (1, MAX_ROW)
         self._refuse_move(src, self.rect, dst, landed, whole)
+        if src.looks.touches(r1, c1, r2, c2):  # a look passed over moves with the cells: the used range is unknown
+            src.looks.unsure = dst.looks.unsure = True
         if not whole and (r2 - r1 + 1) * (c2 - c1 + 1) > 1_000_000:
             raise VBANotImplemented("cutting more than a million cells that are not whole rows or columns")
         src.fresh()
@@ -833,6 +896,13 @@ class Range(VBAObject):
         }
         if mode == 8:  # xlPasteColumnWidths: nothing of the cells themselves
             self.app.note("FORMATS-NOT-MODELLED")
+            c2 = max(self.c2, self.c1 + clip.c2 - clip.c1)
+            hidden = clip.sheet.hidden_cols & set(range(clip.c1, clip.c2 + 1)) or self.sheet.hidden_cols & set(
+                range(self.c1, c2 + 1)
+            )
+            if hidden or self.sheet.protects():
+                raise VBANotImplemented("pasting column widths to or from hidden columns, or onto a protected sheet")
+            self.sheet.looks.restyle(1, self.c1, MAX_ROW, c2)
             return True
         if mode not in types:
             raise VBANotImplemented(f"PasteSpecial Paste:={mode}")
@@ -892,6 +962,8 @@ class Range(VBAObject):
         height, width = len(clip.rows), clip.c2 - clip.c1 + 1
         if what in ("all", "formats"):
             self.app.note("FORMATS-NOT-MODELLED")
+            if src.looks.touches(min(clip.rows), clip.c1, max(clip.rows), clip.c2) or dest.looks.touches(*area):
+                dest.looks.unsure = True  # a look passed over is copied, or covered: what the used range is, unknown
         formats = numfmts or what in ("all", "formats")
         whole_rows = clip.c1 == 1 and clip.c2 == MAX_COL
 

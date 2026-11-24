@@ -54,6 +54,7 @@ uv run ruff format .          # format
 | a member of an Excel object | an `m_<name>` (method), `get_<name>` or `let_<name>` (property) on its class in [excel/](macropress/excel/) | unknown members already stop the run, so there is no list to update |
 | a worksheet function in formulas | an `f_<name>` function in [formula.py](macropress/formula.py), added to its `FUNCTIONS` table | formulas using it are then calculated instead of saved for Excel to calculate |
 | a `Format` pattern | `b_format` in [builtins.py](macropress/builtins.py) | |
+| a setting of how a sheet looks, passed over by `--skip-appearance` | its member and the values Excel takes, in the tables of [excel/looks.py](macropress/excel/looks.py) | record what Excel takes first; a value outside the table stops the run |
 | an assumption about Excel | an entry in [ledger.py](macropress/ledger.py) and a `note()` where it is relied on | |
 | a check against Excel | a test in [tests/parity/probes.py](tests/parity/probes.py) | record Excel's answers with `tests/parity/record.py` (see [tests/parity/README.md](tests/parity/README.md)) |
 

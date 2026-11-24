@@ -20,7 +20,7 @@ NOW = dt.datetime(2026, 1, 2, 3, 4, 5)
 class Runner:
     MODE = "python"
 
-    def run_vba(self, code, macro="Test", sheets=("Sheet1",), times=1, answers=(), modules=()):
+    def run_vba(self, code, macro="Test", sheets=("Sheet1",), times=1, answers=(), modules=(), skip_appearance=False):
         """Run `macro` `times` times in one session; return (Debug.Print lines, book, ledger). modules: more modules
         beside Module1, as (name, code)."""
         book = Book.blank(sheets)
@@ -28,7 +28,7 @@ class Runner:
         source = codegen.convert(project, "test", [(None, macro)], force_flat=(self.MODE == "steps"))
         namespace = {}
         exec(compile(source, "<generated>", "exec"), namespace)
-        ctx = runtime.Context(book=book, now=NOW, answers=answers)
+        ctx = runtime.Context(book=book, now=NOW, answers=answers, skip_appearance=skip_appearance)
         for _ in range(times):
             namespace[macro](ctx)
         ledger, messages = ctx.ledger, ctx.messages
@@ -883,6 +883,65 @@ class ExcelModel(Runner):
         with self.assertRaises(VBARuntimeError) as ctx:  # a name Excel refuses
             self.prints('Sheets(1).Name = "a/b"')
         self.assertEqual(ctx.exception.number, 1004)
+
+    def test_how_a_sheet_looks_is_passed_over_only_when_the_run_is_told_to(self):
+        with self.assertRaisesRegex(VBANotImplemented, "--skip-appearance passes over"):
+            self.prints('Range("A1").Font.Bold = True')
+        for body in (
+            'Range("A1").HorizontalAlignment = xlCenter',
+            "Columns(1).ColumnWidth = 12",
+            "ActiveWindow.Zoom = 85",
+        ):
+            with self.assertRaisesRegex(VBANotImplemented, "how a sheet looks is not modelled"):
+                self.prints(body)
+        body = (
+            'Range("A1:B2").Value = 1\nRange("A1").Font.Bold = True\nWith Range("A1:B2").Interior\n.Pattern = xlSolid\n'
+            '.Color = RGB(255, 255, 0)\nEnd With\nSet f = Range("A2").Font\nf.Size = 14\n'
+            'Range("A1:B2").Borders(xlEdgeBottom).LineStyle = xlContinuous\nRange("A1:B2").BorderAround xlContinuous, xlThin\n'
+            'Range("A1").HorizontalAlignment = xlCenter\nRange("A1").WrapText = True\nSheets(1).Tab.Color = 255\n'
+            'ActiveWindow.Zoom = 85\nActiveWindow.SmallScroll Down:=3\nDebug.Print TypeName(f), Range("A1").Value, '
+            'Range("A1").NumberFormat\nColumns(3).ColumnWidth = 0\nRows(4).RowHeight = 0\nDebug.Print Columns(3).Hidden, '
+            "Rows(4).Hidden\nColumns(3).ColumnWidth = 12\nRows(4).AutoFit\nDebug.Print Columns(3).Hidden, Rows(4).Hidden\n"
+            'Range("D6").Font.Bold = True\nRows(9).RowHeight = 30\nDebug.Print ActiveSheet.UsedRange.Address\n'
+            "Rows(9).AutoFit\nRows(12).Hidden = True\nDebug.Print ActiveSheet.UsedRange.Address\n"
+            'On Error Resume Next\nRange("A1").AutoFit\nDebug.Print Err.Number, Range("A1:B3").Columns(2).Count\nErr.Clear\n'
+            'ActiveSheet.Protect\nRange("A1").Font.Italic = True\nDebug.Print Err.Number\nErr.Clear\n'
+            "Columns(1).AutoFit\nDebug.Print Err.Number\nErr.Clear\nActiveSheet.Tab.Color = 0\nDebug.Print Err.Number"
+        )
+        # what these leave that a macro sees is Excel's: values and formats stay, a width or height of 0 hides and
+        # any other (or AutoFit) shows again, formatted cells, rows given a height and hidden rows are in the used
+        # range, AutoFit is for rows or columns, Columns(2) of a range is one column, a protected sheet refuses
+        out, _, ledger = self.run_vba("Sub Test()\n" + body + "\nEnd Sub\n", skip_appearance=True)
+        expected = [
+            "Font 1 General",
+            "True True",
+            "False False",
+            "$A$1:$D$9",
+            "$A$1:$D$12",
+            "1004 1",
+            "1004",
+            "1004",
+            "0",
+        ]
+        self.assertEqual(out, expected)
+        self.assertEqual(ledger.counts["APPEARANCE-SKIPPED"], 17)  # all but the one a protected sheet refused
+        for body, why in (
+            ('x = Range("A1").Font.Bold', "reading Font.Bold"),  # reading how a sheet looks is never passed over
+            ('If Range("A1").Interior.Color = vbYellow Then x = 1', "reading Interior.Color"),
+            ("x = ActiveWindow.Zoom", "reading Window.Zoom"),
+            ('Range("A1").Font.Size = 410', "a value Excel may refuse"),  # nor is a value Excel may refuse
+            ("Rows(2).RowHeight = 0.5", "a value Excel may refuse"),
+            # a number shows ### where its new font or column width leaves no room: what shows is not known
+            ('Range("A1").Value = 5\nRange("A1").Font.Size = 30\nx = Range("A1").Text', "displayed text of Sheet1!A1"),
+            ('Range("A1").Value = 5\nRange("A2").Value = 123\nRange("A1").Columns.AutoFit\nx = Range("A2").Text', "A2"),
+            # and once formatting passed over is cleared or moved, the used range
+            ('Range("D6").Font.Bold = True\nRange("D6").Clear\nSet u = ActiveSheet.UsedRange', "the used range"),
+        ):
+            with self.assertRaisesRegex(VBANotImplemented, why):
+                self.run_vba("Sub Test()\n" + body + "\nEnd Sub\n", skip_appearance=True)
+        # text shows whole whatever its font
+        text = 'Range("A1").Value = "a long piece of text"\nRange("A1").Font.Size = 30\nDebug.Print Range("A1").Text'
+        self.assertEqual(self.prints(text, skip_appearance=True), ["a long piece of text"])
 
 
 class MovingFormulas(Runner):

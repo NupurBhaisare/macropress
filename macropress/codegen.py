@@ -148,11 +148,11 @@ NOT_MODELLED = {
 
 
 # Excel's own objects that are not modelled, by the names VBA code uses without a qualifier. Read as an undeclared
-# variable, ActiveWindow.Zoom = 80 would be "object required", an error On Error Resume Next skips.
+# variable, Windows(1).Zoom = 80 would be "object required", an error On Error Resume Next skips.
 NOT_MODELLED_GLOBALS = {
     name.lower(): name
     for name in (
-        "ActiveWindow ActiveChart ActivePrinter Windows Charts Names CommandBars Dialogs AddIns UserForms Assistant "
+        "ActiveChart ActivePrinter Windows Charts Names CommandBars Dialogs AddIns UserForms Assistant "
         "ThisCell Excel4MacroSheets DialogSheets"
     ).split()
 }

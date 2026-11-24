@@ -13,6 +13,7 @@ from ..values import (
 )
 from .addresses import _COLS, col_letters, col_num, parse_area
 from .constants import MAX_COL, MAX_ROW, PENDING
+from .looks import SheetLooks, Tab
 from .protection import ALLOW, Password, ProtectionObject, SheetProtection, check_password
 from .range import Range
 from .sorting import SortObject
@@ -62,6 +63,7 @@ class Sheet(VBAObject):
         self.protection = None  # SheetProtection while the sheet is protected
         self.protection_read = None  # the protection the file had, kept as it was if a macro gives it back
         self.ui_only = False  # protected with UserInterfaceOnly: macros may change what a user may not
+        self.looks = SheetLooks()  # what statements passed over (--skip-appearance) leave that a macro can see
         self._sort = None
 
     # --- storage ---
@@ -97,10 +99,16 @@ class Sheet(VBAObject):
         column has room for it; where it has not, Excel rounds the number to fit or shows ####, which is not
         modelled: it turns on the column's width and its font."""
         text = self.cell_text(r, c)
-        if text and not isinstance(self.raw_value(r, c), str) and len(text) > self.room(c):
-            raise VBANotImplemented(
-                f"the displayed text of {self.name}!{col_letters(c)}{r}: {text} may not fit its column as it stands"
-            )
+        if text and not isinstance(self.raw_value(r, c), str):
+            if len(text) > self.room(c):
+                raise VBANotImplemented(
+                    f"the displayed text of {self.name}!{col_letters(c)}{r}: {text} may not fit its column as it stands"
+                )
+            if not self.looks.text_known(r, c):  # Excel shows ### where the new font or width leaves too little room
+                raise VBANotImplemented(
+                    f"the displayed text of {self.name}!{col_letters(c)}{r}: its font, alignment or column width "
+                    "changed, which is not modelled"
+                )
         return text
 
     def room(self, c):
@@ -207,6 +215,8 @@ class Sheet(VBAObject):
 
     def _reset_formats(self, r1, c1, r2, c2):
         """Make the rectangle's cells General and locked where a format of their row or column would say otherwise."""
+        if self.looks.touches(r1, c1, r2, c2):  # a look passed over is cleared: what the used range is, unknown
+            self.looks.unsure = True
         if c1 == 1 and c2 == MAX_COL:
             for r in [r for r in self.row_formats if r1 <= r <= r2]:
                 del self.row_formats[r]
@@ -368,7 +378,8 @@ class Sheet(VBAObject):
             if overlaps and not inside:
                 raise VBARuntimeError(1004, "Cannot change part of a merged cell")
 
-    def used_bounds(self):
+    def used_bounds(self, more_rows=(), more_cols=()):
+        """The rectangle of the cells in use, or None; with these rows and columns as well."""
         if self.book.dirty:
             # A stale formula's cell is used whatever its value, so only a stale dynamic array, which may spill, can
             # change the bounds. Calculating the others here would calculate, in the middle of a formula reading a
@@ -376,8 +387,9 @@ class Sheet(VBAObject):
             self.book.refresh(self, spills_only=True)
         # The cells the sheet holds, and the rows and columns formatted whole: a formatted column counts as used
         # (on its first row, if nothing else says which), as a formatted row does.
-        rows = [r for r, row in self.rows.items() if row] + list(self.row_formats)
+        rows = [r for r, row in self.rows.items() if row] + list(self.row_formats) + list(more_rows)
         cols = [c for row in self.rows.values() for c in row] + list({*self.col_formats, *self.col_unlocked})
+        cols += more_cols
         if not rows and not cols:
             return None
         r1, c1, r2, c2 = min(rows, default=1), min(cols, default=1), max(rows, default=1), max(cols, default=1)
@@ -387,6 +399,33 @@ class Sheet(VBAObject):
 
     def in_filter_mode(self):
         return self.autofilter is not None and bool(self.autofilter.criteria)
+
+    def show_rows(self, r1, r2, shown, what):
+        """Hide whole rows, or show again those hidden, as a height of 0 or another does, or AutoFit (recorded). Rows a
+        filter hides stay hidden; rows hidden by hand while a filter is on, and hiding rows then, are not modelled."""
+        if self.in_filter_mode():
+            if not shown or any(r1 <= r <= r2 for r in self.manual_hidden & self.hidden_rows):
+                raise VBANotImplemented(
+                    f"{what} on rows of a filtered sheet: hiding them, or showing rows hidden by hand"
+                )
+            return
+        if shown:
+            rows = [r for r in self.hidden_rows if r1 <= r <= r2]
+            self.hidden_rows.difference_update(rows)
+            self.manual_hidden.difference_update(rows)
+        else:
+            rows = range(r1, r2 + 1)
+            self.hidden_rows.update(rows)
+            self.manual_hidden.update(rows)
+        if rows:
+            self.changed = True
+            self.book.rows_shown_changed(self)
+
+    def show_columns(self, c1, c2, shown):
+        """Hide whole columns, or show them again, as a width of 0 or another does, or AutoFit (recorded)."""
+        cols = range(c1, c2 + 1)
+        (self.hidden_cols.difference_update if shown else self.hidden_cols.update)(cols)
+        self.changed = True
 
     # --- protection ---
     def protects(self):
@@ -668,10 +707,22 @@ class Sheet(VBAObject):
         return True
 
     def get_usedrange(self):
-        b = self.used_bounds()
+        """The cells in use, as Excel counts them: also those, and the rows, formatted by statements passed over
+        (--skip-appearance), the rows given a height, and the rows hidden (recorded; not the columns hidden)."""
+        if self.looks.unsure:
+            raise VBANotImplemented(
+                f"the used range of {self.name}, once formatting passed over (--skip-appearance) was cleared or moved"
+            )
+        rows, cols = self.looks.used()
+        if self.hidden_rows:
+            rows += [min(self.hidden_rows), max(self.hidden_rows)]
+        b = self.used_bounds(rows, cols)
         if b is None:
             return Range(self, 1, 1, 1, 1)
         return Range(self, *b)
+
+    def get_tab(self):
+        return Tab(self)
 
     def get_autofiltermode(self):
         return self.autofilter is not None

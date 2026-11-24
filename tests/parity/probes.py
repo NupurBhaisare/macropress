@@ -2293,6 +2293,174 @@ for k, probe in enumerate([f"E: x = wf.RoundUp({VBR['D1:D2']}, 0)", "V: wf.Round
 SHEETS += [("VB", [8] * 8, [[1, "a", (d("2024-01-05"), "date"), 1.25], [2, "b", (d("2024-02-29"), "date"), 2.5], [3, "c", (d("2024-12-31"), "date")],
                             [4, "d"], [5, "e"]]),
            ("VB2", [8], [[100]])]
+
+# ------------------------------------------------------------------------------------------------------------ appearance
+# 1.2: told to (--skip-appearance), MacroPress passes over what only changes how a sheet looks. What Excel answers here
+# is what those statements leave that a macro can see: their errors, the rows and columns they hide or show, the used
+# range, and the text a cell shows. MacroPress runs these modules with the switch on.
+SKIP_APPEARANCE = {"TAppear"}
+APPEAR_CONSTANTS = (
+    "xlThin xlMedium xlThick xlHairline xlContinuous xlDash xlDot xlDouble xlDashDot xlDashDotDot xlSlantDashDot xlLineStyleNone "
+    "xlEdgeLeft xlEdgeTop xlEdgeBottom xlEdgeRight xlInsideVertical xlInsideHorizontal xlDiagonalDown xlDiagonalUp xlAutomatic "
+    "xlSolid xlColorIndexNone xlColorIndexAutomatic xlLeft xlRight xlCenter xlGeneral xlTop xlBottom xlJustify xlDistributed "
+    "xlFill xlCenterAcrossSelection xlContext xlLTR xlRTL xlUpward xlDownward xlVertical xlHorizontal xlUnderlineStyleNone "
+    "xlUnderlineStyleSingle xlUnderlineStyleDouble xlUnderlineStyleSingleAccounting xlUnderlineStyleDoubleAccounting "
+    "xlThemeColorDark1 xlThemeColorLight1 xlThemeColorDark2 xlThemeColorLight2 xlThemeColorAccent1 xlThemeColorAccent2 "
+    "xlThemeColorAccent3 xlThemeColorAccent4 xlThemeColorAccent5 xlThemeColorAccent6 xlThemeColorHyperlink "
+    "xlThemeColorFollowedHyperlink xlThemeFontNone xlThemeFontMajor xlThemeFontMinor xlPatternAutomatic xlPatternNone "
+    "xlPatternSolid xlGray8 xlGray16 xlGray25 xlGray50 xlGray75 xlNormalView xlPageBreakPreview xlPageLayoutView"
+).split()
+for k in range(0, len(APPEAR_CONSTANTS), 15):
+    T("TAppear", f"ap_const{k // 15 + 1}", *(f"V: {name}" for name in APPEAR_CONSTANTS[k:k + 15]))
+T("TAppear", "ap_font", ws_("AP1"), 'Set r = ws.Range("A1:B2")', "E: r.Font.Bold = True", "E: r.Font.Italic = True",
+  "E: r.Font.Underline = xlUnderlineStyleSingle", "E: r.Font.Strikethrough = False", "E: r.Font.Superscript = False", "E: r.Font.Subscript = False",
+  "E: r.Font.OutlineFont = False", "E: r.Font.Shadow = False", 'E: r.Font.Name = "Arial"', "E: r.Font.Size = 14", "E: r.Font.Color = -16776961",
+  "E: r.Font.ThemeColor = xlThemeColorLight1", "E: r.Font.TintAndShade = 0", "E: r.Font.ThemeFont = xlThemeFontMinor",
+  'E: r.Font.FontStyle = "Bold Italic"')
+T("TAppear", "ap_font2", ws_("AP1"), 'With ws.Range("A3").Font', "E: .Bold = True", "E: .Size = 12", "End With", 'Set f = ws.Range("A4").Font',
+  "S: TypeName(f)", "E: f.Size = 9", "E: f.Color = RGB(1, 2, 3)", 'E: ws.Range("A5").Font.ColorIndex = 3',
+  'E: ws.Range("A5").Font.ColorIndex = xlColorIndexAutomatic', 'E: ws.Range("A5").Font.Underline = xlUnderlineStyleDouble',
+  'E: ws.Range("A5").Font.Size = 1', 'E: ws.Range("A5").Font.Size = 409', 'E: ws.Range("A5").Font.Size = 10.5', 'V: ws.Range("A1").Value',
+  'S: ws.Range("A1").NumberFormat', 'E: ws.Range("A5").Font.ColorIndex = 56')
+T("TAppear", "ap_interior", ws_("AP2"), 'Set r = ws.Range("A1:B2")', "E: r.Interior.Pattern = xlSolid", "E: r.Interior.PatternColorIndex = xlAutomatic",
+  "E: r.Interior.Color = 65535", "E: r.Interior.TintAndShade = 0", "E: r.Interior.PatternTintAndShade = 0",
+  "E: r.Interior.ThemeColor = xlThemeColorAccent1", "E: r.Interior.TintAndShade = 0.799981688894314", "E: r.Interior.ColorIndex = 6",
+  "E: r.Interior.Pattern = xlNone", "E: r.Interior.ColorIndex = xlNone", "E: r.Interior.PatternColor = RGB(0, 0, 0)",
+  "E: r.Interior.PatternThemeColor = xlThemeColorDark1", "E: r.Interior.Pattern = xlGray50", "E: r.Interior.Color = RGB(255, 255, 0)",
+  "E: r.Interior.ColorIndex = xlColorIndexNone")
+T("TAppear", "ap_borders", ws_("AP3"), 'Set r = ws.Range("A1:C3")', "E: r.Borders(xlEdgeBottom).LineStyle = xlContinuous",
+  "E: r.Borders(xlEdgeBottom).Weight = xlThin", "E: r.Borders(xlEdgeLeft).ColorIndex = 0", "E: r.Borders(xlEdgeLeft).TintAndShade = 0",
+  "E: r.Borders(xlEdgeTop).Color = RGB(0, 0, 0)", "E: r.Borders(xlEdgeRight).ThemeColor = 1", "E: r.Borders(xlInsideVertical).LineStyle = xlNone",
+  "E: r.Borders(xlInsideHorizontal).LineStyle = xlDash", "E: r.Borders(xlDiagonalDown).LineStyle = xlNone",
+  "E: r.Borders(xlDiagonalUp).LineStyle = xlNone", "E: r.Borders.LineStyle = xlContinuous", "E: r.Borders.Weight = xlMedium",
+  "E: r.Borders.Color = RGB(9, 9, 9)", "E: r.BorderAround xlContinuous, xlThick", "E: r.BorderAround Weight:=xlHairline")
+T("TAppear", "ap_borders2", ws_("AP3"), 'Set r = ws.Range("E1:F2")', "E: r.Borders(xlEdgeBottom).LineStyle = xlDouble",
+  "E: r.Borders(xlEdgeBottom).Weight = xlThick", "E: r.Borders(xlEdgeBottom).LineStyle = xlDot", "E: r.Borders(xlEdgeBottom).LineStyle = xlDashDot",
+  "E: r.Borders(xlEdgeBottom).LineStyle = xlDashDotDot", "E: r.Borders(xlEdgeBottom).LineStyle = xlSlantDashDot",
+  "E: r.Borders(xlEdgeBottom).LineStyle = xlLineStyleNone", "E: r.Borders(xlEdgeBottom).Weight = xlHairline",
+  "E: r.Borders(xlEdgeTop).ColorIndex = 56", "E: r.Borders(xlEdgeTop).ColorIndex = xlColorIndexAutomatic", "E: r.Borders(xlEdgeTop).LineStyle = xlNone",
+  "E: r.Borders(xlEdgeLeft).Weight = xlMedium", "E: r.BorderAround xlDouble", "E: r.BorderAround xlContinuous, xlThin, , RGB(1, 2, 3)",
+  "E: r.BorderAround xlContinuous, xlThin, 3")
+T("TAppear", "ap_align", ws_("AP4"), 'Set r = ws.Range("A1:B2")', "E: r.HorizontalAlignment = xlCenter", "E: r.HorizontalAlignment = xlLeft",
+  "E: r.HorizontalAlignment = xlRight", "E: r.HorizontalAlignment = xlGeneral", "E: r.HorizontalAlignment = xlCenterAcrossSelection",
+  "E: r.HorizontalAlignment = xlJustify", "E: r.HorizontalAlignment = xlDistributed", "E: r.VerticalAlignment = xlTop",
+  "E: r.VerticalAlignment = xlBottom", "E: r.VerticalAlignment = xlCenter", "E: r.VerticalAlignment = xlJustify",
+  "E: r.VerticalAlignment = xlDistributed", "E: r.WrapText = True", "E: r.WrapText = False", "E: r.ShrinkToFit = True")
+T("TAppear", "ap_align2", ws_("AP4"), 'Set r = ws.Range("D1:E2")', "r.HorizontalAlignment = xlLeft", "E: r.Orientation = 45", "E: r.Orientation = 90",
+  "E: r.Orientation = -90", "E: r.Orientation = xlUpward", "E: r.Orientation = xlDownward", "E: r.Orientation = xlHorizontal",
+  "E: r.Orientation = xlVertical", "E: r.Orientation = 0", "E: r.IndentLevel = 2", "E: r.IndentLevel = 15", "E: r.IndentLevel = 0",
+  "E: r.AddIndent = False", "E: r.ReadingOrder = xlContext", "E: r.ReadingOrder = xlLTR", "E: r.ReadingOrder = xlRTL")
+T("TAppear", "ap_sizes", ws_("AP5"), "E: ws.Columns(1).ColumnWidth = 20", 'E: ws.Columns("B:C").ColumnWidth = 255',
+  'E: ws.Range("E1:F1").EntireColumn.ColumnWidth = 12.75', 'E: ws.Range("G5").ColumnWidth = 3', "E: ws.Rows(1).RowHeight = 30",
+  'E: ws.Rows("2:3").RowHeight = 409.5', 'E: ws.Range("A5").EntireRow.RowHeight = 409', 'E: ws.Range("B6:C7").RowHeight = 21',
+  "V: ws.Columns(7).Hidden", "V: ws.Rows(6).Hidden", "E: ws.Cells.ColumnWidth = 9", "E: ws.Cells.RowHeight = 16", "V: ws.Rows(2).Hidden",
+  'V: ws.Range("A1").Value', 'V: ws.Range("A2").Value')
+# a height or width of 0 hides; what shows a row or column again
+T("TAppear", "ap_hide_rows", ws_("AP6"), "ws.Rows(3).RowHeight = 0", "V: ws.Rows(3).Hidden", "ws.Rows(3).RowHeight = 15", "V: ws.Rows(3).Hidden",
+  "ws.Rows(4).Hidden = True", "ws.Rows(4).RowHeight = 20", "V: ws.Rows(4).Hidden", "ws.Rows(5).Hidden = True", "ws.Rows(5).AutoFit",
+  "V: ws.Rows(5).Hidden", "ws.Rows(6).Hidden = True", 'ws.Range("A1:A8").Rows.AutoFit', "V: ws.Rows(6).Hidden", "ws.Rows(7).Hidden = True",
+  'ws.Rows("7:8").RowHeight = 12', "V: ws.Rows(7).Hidden", "ws.Rows(9).Hidden = True", "ws.Cells.RowHeight = 15", "V: ws.Rows(9).Hidden",
+  "ws.Rows(10).RowHeight = 0", "ws.Rows(10).Hidden = False", "V: ws.Rows(10).Hidden", "ws.Rows(11).RowHeight = 0", "ws.Rows(11).AutoFit",
+  "V: ws.Rows(11).Hidden")
+T("TAppear", "ap_hide_cols", ws_("AP7"), "ws.Columns(3).ColumnWidth = 0", "V: ws.Columns(3).Hidden", "ws.Columns(3).ColumnWidth = 10",
+  "V: ws.Columns(3).Hidden", "ws.Columns(4).Hidden = True", "ws.Columns(4).ColumnWidth = 12", "V: ws.Columns(4).Hidden",
+  "ws.Columns(5).Hidden = True", "ws.Columns(5).AutoFit", "V: ws.Columns(5).Hidden", "ws.Columns(6).Hidden = True",
+  'ws.Range("A1:H1").Columns.AutoFit', "V: ws.Columns(6).Hidden", "ws.Columns(7).Hidden = True", "ws.Cells.EntireColumn.AutoFit",
+  "V: ws.Columns(7).Hidden", "ws.Columns(8).Hidden = True", 'ws.Columns("H:I").ColumnWidth = 5', "V: ws.Columns(8).Hidden",
+  "ws.Columns(10).ColumnWidth = 0", "ws.Columns(10).AutoFit", "V: ws.Columns(10).Hidden", "ws.Columns(11).Hidden = True",
+  "ws.Cells.ColumnWidth = 8", "V: ws.Columns(11).Hidden")
+T("TAppear", "ap_tiny", ws_("AP25"), "ws.Columns(2).ColumnWidth = 0.5", "V: ws.Columns(2).Hidden", "ws.Rows(2).RowHeight = 0.75",
+  "V: ws.Rows(2).Hidden", "ws.Columns(3).ColumnWidth = 0.1", "V: ws.Columns(3).Hidden", "ws.Rows(3).RowHeight = 0.1", "V: ws.Rows(3).Hidden")
+T("TAppear", "ap_filter_autofit", ws_("AP8"), 'ws.Range("A1:E13").AutoFilter 2, "North"', "S: Vis(ws)", 'ws.Rows("1:13").AutoFit', "S: Vis(ws)",
+  'ws.Range("A1:E13").Rows.AutoFit', "S: Vis(ws)", "ws.Cells.EntireRow.AutoFit", "S: Vis(ws)", "ws.Columns(2).AutoFit", "S: Vis(ws)")
+T("TAppear", "ap_filter_height", ws_("AP9"), 'ws.Range("A1:E13").AutoFilter 2, "North"', "S: Vis(ws)", 'ws.Rows("1:13").RowHeight = 15',
+  "S: Vis(ws)", "V: ws.FilterMode", 'ws.Range("A1:E13").AutoFilter 2, "North"', "S: Vis(ws)")
+# AutoFit is for rows or columns
+T("TAppear", "ap_autofit_kinds", ws_("AP10"), 'E: ws.Range("A1").AutoFit', 'E: ws.Range("A1:B2").AutoFit', 'E: ws.Range("A1:B2").Columns.AutoFit',
+  'E: ws.Range("A1:B2").Rows.AutoFit', 'E: ws.Columns("A:B").AutoFit', "E: ws.Rows(1).AutoFit", 'E: ws.Range("A:A").AutoFit',
+  'E: ws.Range("1:1").AutoFit', "E: ws.Cells.AutoFit", 'E: ws.Range("A1").EntireColumn.AutoFit', 'E: ws.Range("A1").EntireRow.AutoFit',
+  "E: ws.UsedRange.Columns.AutoFit", 'E: ws.Range("A1:B2").Columns(1).AutoFit', 'E: ws.Range("A1:B2").Rows(2).AutoFit',
+  'E: ws.Range("A1:B2").Cells.AutoFit')
+PROT = ['E: ws.Range("A1").Font.Bold = True', 'E: ws.Range("B1").Font.Bold = True', 'E: ws.Range("A1").Interior.Color = 255',
+        'E: ws.Range("B1").Borders.LineStyle = xlContinuous', 'E: ws.Range("A1").HorizontalAlignment = xlCenter', "E: ws.Columns(1).ColumnWidth = 12",
+        "E: ws.Rows(1).RowHeight = 20", "E: ws.Columns(1).AutoFit", "E: ws.Rows(1).AutoFit", "E: ws.Tab.Color = 255", 'E: ws.Range("B1").WrapText = True']
+T("TAppear", "ap_protect", ws_("AP11"), "ws.Protect", *PROT, "ws.Unprotect")
+T("TAppear", "ap_protect2", ws_("AP12"), "ws.Protect AllowFormattingCells:=True, AllowFormattingColumns:=True, AllowFormattingRows:=True", *PROT,
+  "ws.Unprotect")
+AW = ["Dim aw As Object", "Set aw = ActiveWindow"]
+T("TAppear", "ap_window", *AW, "E: aw.Zoom = 85", "E: aw.Zoom = 10", "E: aw.Zoom = 400", "E: aw.DisplayGridlines = False",
+  "E: aw.DisplayHeadings = False", "E: aw.SplitRow = 1", "E: aw.SplitColumn = 1", "E: aw.FreezePanes = True", "E: aw.FreezePanes = False",
+  "E: aw.SplitRow = 0", "E: aw.SplitColumn = 0", "E: aw.ScrollRow = 1", "E: aw.ScrollColumn = 1", "E: aw.SmallScroll Down:=-12",
+  "E: aw.View = xlNormalView", "aw.Zoom = 100", "aw.DisplayGridlines = True", "aw.DisplayHeadings = True")
+T("TAppear", "ap_window2", *AW, "E: aw.SmallScroll ToRight:=3", "E: aw.SmallScroll Up:=2", "E: aw.SmallScroll Down:=500",
+  "E: aw.ScrollRow = 1000", "E: aw.ScrollColumn = 30", "E: ActiveWindow.Zoom = 100", "E: ActiveWindow.DisplayGridlines = True",
+  "E: aw.ScrollRow = 1", "E: aw.ScrollColumn = 1", "E: aw.Split = False", "E: aw.SmallScroll 1, 1, 1, 1")
+T("TAppear", "ap_tab", ws_("AP13"), "E: ws.Tab.Color = 255", "E: ws.Tab.ColorIndex = 3", "E: ws.Tab.ThemeColor = xlThemeColorAccent1",
+  "E: ws.Tab.TintAndShade = 0.4", "E: ws.Tab.Color = False", "E: ws.Tab.ColorIndex = xlColorIndexNone", "E: ws.Tab.Color = RGB(0, 176, 80)",
+  'E: ThisWorkbook.Worksheets("AP13").Tab.ColorIndex = 56')
+# what a macro reads afterwards: values, formulas and number formats stay as they were
+T("TAppear", "ap_values", ws_("AP14"), 'ws.Range("D1").Formula = "=A1*2"', 'ws.Range("A1:D4").Font.Bold = True', 'ws.Range("A1:D4").Interior.Color = 255',
+  'ws.Range("A1:D4").HorizontalAlignment = xlCenter', 'ws.Columns("A:D").ColumnWidth = 30', 'ws.Rows("1:4").RowHeight = 25',
+  'ws.Range("A1:D4").Borders.LineStyle = xlContinuous', 'ws.Range("A1:D4").WrapText = True', 'V: ws.Range("A1").Value', 'V: ws.Range("B1").Value',
+  'S: ws.Range("B1").NumberFormat', 'V: ws.Range("C1").Value', 'S: ws.Range("C1").Text', 'V: ws.Range("D1").Formula', 'V: ws.Range("D1").Value',
+  'S: ws.Range("A1").NumberFormat')
+# the used range: what formatting a cell, a row or a column adds to it
+USED = [("ap_used_cell", 'ws.Range("D6").Font.Bold = True'), ("ap_used_default", 'ws.Range("D6").Font.Bold = False'),
+        ("ap_used_fill", 'ws.Range("E7").Interior.Color = 255'), ("ap_used_border", 'ws.Range("C4").Borders(xlEdgeBottom).LineStyle = xlContinuous'),
+        ("ap_used_row", "ws.Rows(9).Font.Bold = True"), ("ap_used_col", "ws.Columns(6).Interior.Color = 255"),
+        ("ap_used_width", "ws.Columns(7).ColumnWidth = 20"), ("ap_used_height", "ws.Rows(12).RowHeight = 30"),
+        ("ap_used_align", 'ws.Range("D6").HorizontalAlignment = xlCenter')]
+for k, (name, line) in enumerate(USED, 15):
+    T("TAppear", name, ws_(f"AP{k}"), line, "S: ws.UsedRange.Address")
+# the text a cell shows turns on its font and its column's width; text shows whole
+T("TAppear", "ap_text_font", ws_("AP24"), 'ws.Range("A1").Value = 1234567', 'ws.Range("A1").Font.Size = 36', 'S: ws.Range("A1").Text')
+T("TAppear", "ap_text_width", ws_("AP24"), "ws.Columns(2).ColumnWidth = 3", 'ws.Range("B1").Value = 12345', 'S: ws.Range("B1").Text')
+T("TAppear", "ap_text_autofit", ws_("AP24"), 'ws.Range("C1").Value = 5', 'ws.Range("C2").Value = 12345', 'ws.Range("C1").Columns.AutoFit',
+  'S: ws.Range("C2").Text')
+T("TAppear", "ap_text_string", ws_("AP24"), 'ws.Range("D1").Value = "a long piece of text"', 'ws.Range("D1").Font.Size = 30',
+  "ws.Columns(4).ColumnWidth = 2", 'S: ws.Range("D1").Text')
+T("TAppear", "ap_text_fill", ws_("AP24"), 'ws.Range("E1").Value = "ab"', 'ws.Range("E1").HorizontalAlignment = xlFill', 'S: ws.Range("E1").Text')
+# one each: values Excel may refuse
+ONE_LOOK = ['E: ws.Range("A1").Font.Color = -1', 'E: ws.Range("A1").Font.Color = 16777216', 'E: ws.Range("A1").Interior.Color = 2147483647',
+            'E: ws.Range("A1").Font.ColorIndex = 0', 'E: ws.Range("A1").Font.Name = ""', 'E: ws.Range("A1").Font.Name = String(31, "a")',
+            'E: ws.Range("A1").Font.Name = String(40, "a")', 'E: ws.Range("A1").Font.FontStyle = "Nonsense"', 'E: ws.Range("A1").Font.Underline = True',
+            'E: ws.Range("A1").IndentLevel = 250', 'E: ws.Range("A1").IndentLevel = 251',
+            'E: ws.Range("A1").Borders(xlInsideVertical).LineStyle = xlContinuous', 'E: ws.Range("A1").Interior.Color = xlNone',
+            "E: ws.Columns(1).ColumnWidth = 256", "E: ws.Rows(1).RowHeight = 410", 'E: ws.Range("A1").Font.Size = 410',
+            'E: ws.Range("A1").Font.Size = 0.5', 'E: ws.Range("A1").Font.TintAndShade = 1.5', 'E: ws.Range("A1").Font.ThemeColor = 13',
+            'E: ws.Range("A1").Font.ColorIndex = 57', 'E: ws.Range("A1").Font.Bold = 1', 'E: ws.Range("A1").Orientation = 91',
+            'E: ws.Range("A1").HorizontalAlignment = xlFill']
+for k, probe in enumerate(ONE_LOOK, 1):
+    T("TAppear", f"ap_one{k}", ws_("AP26"), probe)
+for k, probe in enumerate(["E: aw.SplitRow = 30", "E: aw.SplitColumn = 20", "E: aw.Zoom = 9", "E: aw.Zoom = 401", "E: aw.View = 4"], 1):
+    T("TAppear", f"ap_win{k}", *AW, probe, "aw.SplitRow = 0", "aw.SplitColumn = 0", "aw.Zoom = 100")
+# how small a height or width still hides; what Rows(2) and Columns(2) of a range count and go through
+HEIGHTS = (0.8, 1, 1.5, 2, 3, 5)
+T("TAppear", "ap_heights", ws_("AP27"), *[line for k, h in enumerate(HEIGHTS, 2) for line in (f"ws.Rows({k}).RowHeight = {h}", f"V: ws.Rows({k}).Hidden")],
+  "ws.Columns(2).ColumnWidth = 0.05", "V: ws.Columns(2).Hidden", "ws.Columns(3).ColumnWidth = 0.01", "V: ws.Columns(3).Hidden")
+T("TAppear", "ap_views", ws_("AP27"), 'N: ws.Range("A1:B3").Columns(2).Count', 'N: ws.Range("A1:B3").Rows(2).Count',
+  'N: ws.Range("A1:B3").Columns(2).Cells.Count', 'S: ws.Range("A1:B3").Columns(2).Address', 'N: ws.Range("A1:B3").Columns(1).Rows.Count',
+  "N: ws.Columns(2).Count", "N: ws.Rows(2).Count", 'N: ws.Range("A1:C3").Rows(2).Columns.Count', "n = 0", 'For Each c In ws.Range("A1:B3").Columns(2)',
+  "n = n + 1", "Next c", "N: n")
+USED2 = [("ap_used_autofit_row", "ws.Rows(12).AutoFit"), ("ap_used_autofit_col", "ws.Columns(7).AutoFit"),
+         ("ap_used_height0", "ws.Rows(12).RowHeight = 0"), ("ap_used_hidden", "ws.Rows(12).Hidden = True"),
+         ("ap_used_hidden_col", "ws.Columns(7).Hidden = True"), ("ap_used_sheet", "ws.Cells.Font.Bold = True"),
+         ("ap_used_width0", "ws.Columns(7).ColumnWidth = 0"), ("ap_used_rows_in", 'ws.Range("A1:B2").Rows.AutoFit')]
+for k, (name, line) in enumerate(USED2, 28):
+    T("TAppear", name, ws_(f"AP{k}"), line, "S: ws.UsedRange.Address")
+T("TAppear", "ap_used_clear", ws_("AP36"), 'ws.Range("D6").Font.Bold = True', 'ws.Range("D6").Clear', "S: ws.UsedRange.Address")
+USED3 = [("ap_used_unhide", "ws.Rows(12).Hidden = True", "ws.Rows(12).Hidden = False"),
+         ("ap_used_unhide_fit", "ws.Rows(12).Hidden = True", "ws.Rows(12).AutoFit"),
+         ("ap_used_height_fit", "ws.Rows(12).RowHeight = 30", "ws.Rows(12).AutoFit")]
+for k, (name, *lines) in enumerate(USED3, 37):
+    T("TAppear", name, ws_(f"AP{k}"), *lines, "S: ws.UsedRange.Address")
+SHEETS += [("AP1", [8] * 4, [[1, 2], [3, 4], ["x"], [5], [6]])] + [(f"AP{k}", [8] * 6, [[1, 2], [3, 4]]) for k in (2, 3, 4, 5)]
+SHEETS += [("AP6", [8], [[k] for k in range(1, 13)]), ("AP7", [8] * 11, [list(range(1, 12))])]
+SHEETS += [(f"AP{k}", [8, 12, 12, 12, 8], FILTER_ROWS) for k in (8, 9)] + [("AP10", [8] * 3, [[1, 2], [3, 4], [5, 6]])]
+SHEETS += [(f"AP{k}", [8] * 5, PR_ROWS) for k in (11, 12)] + [("AP13", [8], [[1]])]
+SHEETS += [("AP14", [8] * 4, [[5, (d("2024-01-05"), "date"), "text"]])] + [(f"AP{k}", [8] * 4, [[1, 2], [3, 4]]) for k in range(15, 24)]
+SHEETS += [("AP24", [8] * 6, []), ("AP25", [8] * 4, [[1, 2, 3], [4, 5, 6], [7, 8, 9]]), ("AP26", [8] * 3, [[1]])]
+SHEETS += [("AP27", [8] * 4, [[1, 2], [3, 4], [5, 6]])] + [(f"AP{k}", [8] * 4, [[1, 2], [3, 4]]) for k in range(28, 40)]
 SHEETS += [(f"V{i}", [8], []) for i in range(1, 7)]  # the last sheets of the workbook: hiding the last is tried
 
 def sheets(index):

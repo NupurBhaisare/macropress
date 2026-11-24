@@ -64,11 +64,11 @@ Some come with limits, and stop the run outside them:
 
 | Object | Members |
 | --- | --- |
-| Application (and the globals) | ActiveCell, ActiveSheet, ActiveWorkbook, Calculate, Calculation, Cells, Columns, CutCopyMode, DisplayAlerts, DisplayStatusBar, EnableEvents, Evaluate (and `[A1+1]`), Intersect, Range, Rows, ScreenUpdating, Selection, Sheets, StatusBar, ThisWorkbook, Wait, Workbooks, WorksheetFunction, Worksheets, and the worksheet functions by name (`Application.Match`, below) |
+| Application (and the globals) | ActiveCell, ActiveSheet, ActiveWindow (below), ActiveWorkbook, Calculate, Calculation, Cells, Columns, CutCopyMode, DisplayAlerts, DisplayStatusBar, EnableEvents, Evaluate (and `[A1+1]`), Intersect, Range, Rows, ScreenUpdating, Selection, Sheets, StatusBar, ThisWorkbook, Wait, Workbooks, WorksheetFunction, Worksheets, and the worksheet functions by name (`Application.Match`, below) |
 | Workbook | Activate, ActiveSheet, Name, Names, Protect, ProtectStructure, ProtectWindows, Save (the copy is saved when the run ends), Sheets, Unprotect, Worksheets |
 | Sheets, Worksheets | Count, Item, Select (selecting several sheets groups them, as in Excel) |
-| Worksheet | Activate, AutoFilterMode, Calculate, Cells, CodeName, Columns, Evaluate, FilterMode, Index, Name (renaming a sheet updates the formulas and names that refer to it), Parent, Paste, Protect, ProtectContents, ProtectDrawingObjects, Protection (its Allow... options), ProtectionMode, ProtectScenarios, Range, Rows, Select, ShowAllData, Sort, Unprotect, UsedRange, Visible |
-| Range | Activate, Address, AutoFill, AutoFilter, AutoFit (does nothing: widths are not modelled), Calculate, Cells, Clear, ClearContents, Column, Columns, Copy, Count, CurrentRegion, Cut, End, EntireColumn, EntireRow, FillDown, FillLeft, FillRight, FillUp, Formula, Formula2, Formula2R1C1, FormulaR1C1, Hidden, Item, Locked, NumberFormat, Offset, Parent, PasteSpecial, Resize, Row, Rows, Select, Sort, Text, Value, Value2, Worksheet |
+| Worksheet | Activate, AutoFilterMode, Calculate, Cells, CodeName, Columns, Evaluate, FilterMode, Index, Name (renaming a sheet updates the formulas and names that refer to it), Parent, Paste, Protect, ProtectContents, ProtectDrawingObjects, Protection (its Allow... options), ProtectionMode, ProtectScenarios, Range, Rows, Select, ShowAllData, Sort, Tab (below), Unprotect, UsedRange, Visible |
+| Range | Activate, Address, AutoFill, AutoFilter, AutoFit (of rows or columns: below), Calculate, Cells, Clear, ClearContents, Column, Columns, Copy, Count, CurrentRegion, Cut, End, EntireColumn, EntireRow, FillDown, FillLeft, FillRight, FillUp, Formula, Formula2, Formula2R1C1, FormulaR1C1, Hidden, Item, Locked, NumberFormat, Offset, Parent, PasteSpecial, Resize, Row, Rows, Select, Sort, Text, Value, Value2, Worksheet; set only, when told to pass over them (below): Borders, BorderAround, ColumnWidth, Font, Interior, RowHeight and the alignment settings |
 | Sort (Worksheet.Sort) | SortFields (Add, Add2, Clear, Count), SetRange, Header, MatchCase, Orientation, SortMethod, Apply |
 | Name | Name, RefersTo, RefersToRange |
 | WorksheetFunction | Every worksheet function MacroPress calculates that Excel lets VBA reach by name (below), and Transpose |
@@ -124,7 +124,8 @@ protection, fills, cuts and worksheet functions listed below.
   array of formats stop the run.
 - **`Text`** gives what the cell shows for text, for the General format and for plain number formats (`0.00`,
   `#,##0.00`). It stops the run for any other format, and wherever the column's width would decide what shows:
-  Excel rounds a number that does not fit, or shows `####`.
+  Excel rounds a number that does not fit, or shows `####`. So it does for a number whose font, alignment or column
+  width changed (below).
 - **A filtered range**: a value, an array, a clear, a number format or a fill reaches only the rows the filter shows,
   as in Excel, and so does one cell copied over it; a block of cells pasted there lands whole. A filter matches the
   text each cell shows (`1,250.00`, not `1250`), without regard to case or to the spaces around it.
@@ -172,7 +173,37 @@ protection, fills, cuts and worksheet functions listed below.
 Not modelled: `Range.Delete` and `Range.Insert` (moving cells would have to move every reference to them),
 `Range.Find`, `Range.SpecialCells`, `Sheets.Add`, `Workbooks.Add`, `Workbooks.Open`, `Workbook.SaveAs`,
 `Workbook.Close`, `Application.Run`, formats other than number formats and `Locked` (`Font`, `Interior`, `Borders`,
-`ColumnWidth`), charts, pivot tables, shapes and comments.
+`ColumnWidth`: never read, and set only when the run passes over them, below), `PageSetup`, charts, pivot tables,
+shapes and comments.
+
+## How a sheet looks (`--skip-appearance`)
+
+Fonts, fills, borders, alignment, widths and heights, tab colours and the window are not modelled, and by default a
+statement that sets one stops the run. Told to (`--skip-appearance`, or `skip_appearance=True`), a run passes over
+such statements, and its report counts them under `appearance_skipped`: the copy holds the values, formulas and
+number formats, not the look Excel would give it.
+
+- **Passed over**: `Font` (`Bold`, `Italic`, `Underline`, `Name`, `Size`, `Color`, `ColorIndex`, `ThemeColor`,
+  `TintAndShade`, `FontStyle`, ...), `Interior` (`Color`, `ColorIndex`, `Pattern`, ...), `Borders` and
+  `Borders(xlEdgeBottom)` (`LineStyle`, `Weight` and the colours), `BorderAround`, `HorizontalAlignment`,
+  `VerticalAlignment`, `WrapText`, `Orientation`, `IndentLevel`, `AddIndent`, `ShrinkToFit`, `ReadingOrder`,
+  `ColumnWidth`, `RowHeight`, a sheet's `Tab` colour, and `ActiveWindow`'s `Zoom`, `DisplayGridlines`,
+  `DisplayHeadings`, `FreezePanes`, `Split`, `SplitRow`, `SplitColumn`, `ScrollRow`, `ScrollColumn`, `View` (normal)
+  and `SmallScroll`. `With Selection.Font` and `Set f = Range("A1").Font` work as in Excel.
+- **Only values Excel was seen to take**: a value it refuses or that was not tried (`Font.Size = 410`,
+  `ColorIndex = 57`, `Zoom = 9`, a font name of more than 31 characters, a width or height between 0 and 1) stops
+  the run.
+- **Reading** any of it (`If c.Interior.Color = vbYellow`) stops the run: colour-coded inputs need the look itself,
+  which is group 5 of the [roadmap](roadmap.md).
+- **What these statements change that a macro sees is kept**: a protected sheet refuses them with error 1004 unless
+  it allows formatting cells (widths: columns; heights: rows), though it lets a tab's colour change; a width or height
+  of 0 hides the columns or rows and any other shows them again, but not rows a filter hides; formatted cells and
+  whole rows, and rows given a height, count in `UsedRange` (a column formatted whole on its first row; a width, or
+  the whole sheet formatted, not at all), and `UsedRange` stops once such a format is cleared, cut or pasted over; and
+  `Text` stops for a number whose font, alignment or column width changed, where Excel may show `##`.
+- **`AutoFit`**, which needs no switch, is for rows or columns (`Range("A1").AutoFit` is error 1004) and changes no
+  width or height, but shows hidden rows and columns again (not rows a filter hides). A row hidden by hand counts in
+  `UsedRange`, as in Excel, and `Range("A1:B3").Columns(2)` is one column.
 
 ## Formulas
 

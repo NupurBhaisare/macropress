@@ -497,6 +497,25 @@ def test_a_press_takes_what_its_caller_gives_and_says_what_it_could_not_use(tmp_
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["error"] == "--env must be NAME=VALUE"
 
 
+def test_a_press_told_to_passes_over_how_a_sheet_looks_and_counts_what_it_passed_over(tmp_path, monkeypatch, capsys):
+    code = (
+        'Sub Go()\nRange("A1").Font.Bold = True\nWith Range("A1:B2").Interior\n.Pattern = xlSolid\n.Color = vbYellow\n'
+        'End With\nColumns("A:B").AutoFit\nActiveWindow.Zoom = 85\nRange("C1").Value = 3\nEnd Sub\n'
+    )
+    monkeypatch.setattr(api, "from_workbook", lambda path: build_project([("Module1", code)]))
+    path, out = _workbook(tmp_path / "in.xlsm"), tmp_path / "out.xlsm"
+    # by default a run stops at the first statement that only changes how the sheet looks, and says what passes it
+    step = api.press(path, ["Go"], out)["steps"][0]
+    assert step["status"] == "stopped: not modelled" and "--skip-appearance" in step["message"]
+    # told to, it passes over them, counts them by kind, and says the copy does not look as Excel would leave it
+    report = api.press(path, ["Go"], out, skip_appearance=True)
+    assert api.succeeded(report) and report["appearance_skipped"] == {"ActiveWindow": 1, "Font": 1, "Interior": 2}
+    assert any("APPEARANCE-SKIPPED" in line for line in report["unverified_behaviours"])
+    assert _value(read_workbook(str(out)).find_sheet("Data"), 1, 3) == 3
+    assert main(["press", str(path), "--button", "Go", "--out", str(out), "--skip-appearance"]) == 0
+    assert json.loads(capsys.readouterr().out.splitlines()[-1])["appearance_skipped"]["Font"] == 1
+
+
 def test_many_writes_to_a_workbook_of_many_formulas_take_time_in_proportion(tmp_path):
     def seconds(n):
         vba = (

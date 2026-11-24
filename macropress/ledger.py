@@ -125,7 +125,15 @@ ASSUMPTIONS = {
     ),
     "FORMATS-NOT-MODELLED": (
         "limitation",
-        "Column widths, fonts and other formatting are not modelled (AutoFit and similar do nothing).",
+        "Column widths, fonts and other formatting are not modelled: AutoFit and the like change no width, though "
+        "the rows and columns they show again are shown.",
+    ),
+    "APPEARANCE-SKIPPED": (
+        "limitation",
+        "Statements that only change how a sheet looks (fonts, fills, borders, alignment, widths and heights, tab "
+        "colours, the window) were passed over, as the run was told to (--skip-appearance): the copy does not look as "
+        "Excel would leave it. What they change that a macro sees was kept: the rows and columns they hide or show, "
+        "the used range, the errors of a protected sheet.",
     ),
     "ON-ERROR-RESUME-NEXT": (
         "verified",

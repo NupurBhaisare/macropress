@@ -54,7 +54,7 @@ class Probes:
             except VBAError as err:
                 out[name] = ("stopped: not modelled", str(err), {})
                 continue
-            ctx = runtime.Context(str(self.path))
+            ctx = runtime.Context(str(self.path), skip_appearance=module in self.probes.SKIP_APPEARANCE)
             status, message = runtime.run_macro(macro, ctx)
             ctx.book.recalc_all()
             cells = ctx.book.find_sheet("Out").rows.get(row, {})
